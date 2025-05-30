@@ -27,9 +27,9 @@ async def read_index():
     return HTMLResponse(content=html_content)
 
 # --- Serve Static Files ---
-# Assuming script.js, style.css, etc., are in the same directory as server.py
-# If they are in a 'static' subdirectory, change directory='.' to directory='static'
-app.mount("/static", StaticFiles(directory="."), name="static") # Remove html=True here
+# This tells FastAPI that when a request comes for /static/...,
+# look inside the physical 'static' directory relative to where server.py is.
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- Pydantic Models for Game State ---
 class Tile(BaseModel):
