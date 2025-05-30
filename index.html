@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Saboteur</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Saboteur</h1>
+            <div class="tagline">Build words. Break paths. Outsmart your opponent.</div>
+            <button id="themeToggleBtn" class="theme-toggle" aria-label="Toggle light/dark mode">🌙</button>
+        </header>
+
+        <div class="status" id="status">Loading Game...</div>
+
+        <div class="game-container">
+            <div class="board-section">
+                <div class="board-wrapper">
+                    <div class="board" id="board"></div>
+                    <svg id="wordLineOverlay"></svg>
+                </div>
+
+                <div class="player-hand-section current-player-hand-section">
+                    <div class="player-hand-title" id="localPlayerHandTitle">Your Tiles (<span id="localPlayerTileCount">0</span> remaining)</div>
+                    <div class="player-hand" id="localPlayerHand"></div>
+                </div>
+
+                <div class="controls">
+                    <button id="newGameBtn">New Game (vs AI)</button>
+                    <button id="undoBtn" class="secondary">Undo Move</button>
+                </div>
+                <div id="phaseControls">
+                    </div>
+            </div>
+
+            <div class="info-section">
+                <div class="score-board">
+                    <div class="player-score builder-score" id="player1ScoreDisplay">
+                        <div class="player-title" id="player1RoleAndName">Builder (You)</div>
+                        <div class="score-value" id="player1Score">0</div>
+                    </div>
+                    <div class="player-score saboteur-score" id="player2ScoreDisplay">
+                        <div class="player-title" id="player2RoleAndName">Saboteur (AI/Opponent)</div>
+                        <div class="score-value" id="player2Score">0</div>
+                    </div>
+                </div>
+
+                <div class="opponent-hand-section">
+                    <div class="opponent-hand-title" id="opponentHandTitle">Opponent's Tiles (<span id="opponentTileCount">0</span> remaining)</div>
+                    <div class="opponent-hand" id="opponentHand">
+                        </div>
+                </div>
+                 <div class="ai-letter-display">
+                    <div class="label">Opponent's Last Placed Letter:</div>
+                    <div class="letter" id="opponentLastLetter">-</div>
+                </div>
+
+
+                <div class="ai-info">
+                    <div class="ai-title" id="gameModeTitle">AI Difficulty: Medium</div>
+                    <div class="difficulty-selector" id="difficultySelector">
+                        <button class="difficulty-btn" data-level="1">Easy</button>
+                        <button class="difficulty-btn active" data-level="2">Medium</button>
+                        <button class="difficulty-btn" data-level="3">Hard</button>
+                    </div>
+                </div>
+
+                <div class="word-list-container">
+                    <div class="word-list-title">Found Words</div>
+                    <div id="wordList">
+                        <div class="word-item">No words found yet.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>How to Play:</h3>
+            <p><strong>Objective:</strong> Be the player with the highest <strong>Builder</strong> score after two phases.</p>
+            <p><strong>Phase 1:</strong> You are the <strong class="builder-text">Builder</strong>, your opponent is the <strong class="saboteur-text">Saboteur</strong>.
+            <br><strong>Phase 2:</strong> Roles switch! You become the <strong class="saboteur-text">Saboteur</strong>, opponent is the <strong class="builder-text">Builder</strong>.</p>
+            <p><strong>Gameplay:</strong>
+                Players take turns placing one of their 10 letter tiles onto an empty square on the 5x5 board.
+                Try to form 5-letter words (horizontally, vertically, or diagonally) using adjacent tiles. Words must be in the game's dictionary.
+            </p>
+            <p><strong>Scoring (for the current Builder):</strong>
+                <ul>
+                    <li>+1 point for each of the Builder's own tiles in a valid word.</li>
+                    <li>+2 points for each of the Saboteur's tiles used in that Builder's word.</li>
+                </ul>
+            The Saboteur aims to block the Builder or trick them into using Saboteur tiles (which give the Builder more points, but might be a trap!).
+            </p>
+             <p><strong>Game End & Winning:</strong>
+                Each phase ends when all 20 tiles for that phase have been placed.
+                The player with the higher total Builder score from their turn as Builder wins.
+                If scores are tied, the player who formed their first word using fewer of their own tiles (in their Builder phase) wins.
+            </p>
+        </div>
+    </div>
+
+    <div id="multiplayerModal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <span id="closeMultiplayerModal" class="close">&times;</span>
+        <h2>Multiplayer</h2>
+        <div id="multiplayerStatus" class="multiplayer-status-message"></div>
+
+        <div id="multiplayerStepSetup" style="display:block;">
+            <button id="createGameBtn">Create Game</button>
+            <hr class="modal-hr">
+            <input id="joinGameCodeInput" placeholder="Enter game code (8 chars)" maxlength="8" />
+            <button id="joinGameBtn">Join Game</button>
+        </div>
+
+        <div id="multiplayerGameInfo" style="display:none;">
+          <p>Game Code: <strong id="gameCodeDisplay"></strong> <button id="copyGameCodeBtn" class="small-btn">Copy Code</button></p>
+          <p>Share this link: <input id="inviteLinkInput" type="text" readonly style="width: 70%;"/><button id="copyInviteLinkBtn" class="small-btn">Copy Link</button></p>
+          <p id="playerRoleDisplay"></p>
+          <p id="opponentStatus" class="opponent-status-message">Waiting for opponent...</p>
+          <button id="startGameBtn" style="display:none;">Ready to Start</button>
+        </div>
+      </div>
+    </div>
+    <button id="multiplayerBtn" class="multiplayer-mode-btn">Play Multiplayer</button>
+
+    <script src="script.js"></script>
+</body>
+</html>

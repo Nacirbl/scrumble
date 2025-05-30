@@ -1,0 +1,495 @@
+/* Basic Reset & Global Styles */
+:root {
+    --background-color: #f0f2f5;
+    --text-color: #333;
+    --primary-color: #007bff;
+    --secondary-color: #6c757d;
+    --builder-color: #28a745;
+    --saboteur-color: #dc3545;
+    --cell-bg: #fff;
+    --cell-border: #ccc;
+    --board-bg: #e9ecef;
+    --modal-bg: #fff;
+    --input-bg: #fff;
+    --hand-tile-bg: #f8f9fa;
+    --hand-tile-border: #dee2e6;
+    --hand-tile-selected-bg: #cce5ff;
+    --header-bg: #343a40;
+    --header-text-color: #fff;
+    --button-text-color: #fff;
+    --highlight-color: #22c55e; /* Green for word paths */
+
+    --font-family: 'Arial', sans-serif;
+    --border-radius: 6px;
+    --box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+body.light-mode {
+    /* Light mode is default as defined in :root */
+}
+
+body:not(.light-mode) { /* Dark Mode */
+    --background-color: #1a1a1a;
+    --text-color: #e0e0e0;
+    --cell-bg: #2a2a2a;
+    --cell-border: #444;
+    --board-bg: #222;
+    --modal-bg: #333;
+    --input-bg: #444;
+    --hand-tile-bg: #2c2c2c;
+    --hand-tile-border: #4a4a4a;
+    --hand-tile-selected-bg: #004c8a;
+    --header-bg: #111;
+}
+
+
+body {
+    font-family: var(--font-family);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+    transition: background-color 0.3s, color 0.3s;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    background-color: var(--cell-bg); /* Similar to cell-bg for container consistency */
+    padding: 20px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+
+header {
+    background-color: var(--header-bg);
+    color: var(--header-text-color);
+    padding: 15px 20px;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    text-align: center;
+    position: relative;
+    margin: -20px -20px 20px -20px; /* Extend to container edges */
+}
+
+header h1 {
+    margin: 0 0 5px 0;
+    font-size: 2em;
+}
+
+.tagline {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.theme-toggle {
+    position: absolute;
+    top: 15px;
+    right: 20px;
+    background: none;
+    border: 1px solid var(--header-text-color);
+    color: var(--header-text-color);
+    font-size: 1.2em;
+    cursor: pointer;
+    border-radius: 50%;
+    width: 35px;
+    height: 35px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status {
+    text-align: center;
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-bottom: 20px;
+    padding: 10px;
+    border: 2px solid var(--primary-color);
+    border-radius: var(--border-radius);
+    background-color: var(--background-color);
+}
+
+.game-container {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap; /* Allow wrapping for smaller screens */
+}
+
+.board-section {
+    flex: 2; /* Takes more space */
+    min-width: 320px; /* Minimum width before wrapping info section */
+}
+
+.info-section {
+    flex: 1;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.board-wrapper {
+    position: relative;
+    width: fit-content; /* Or fixed width like 300px */
+    margin: 0 auto 20px auto; /* Center the board */
+    max-width: 100%; /* Ensure it fits */
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    width: clamp(250px, 80vw, 400px); /* Responsive width */
+    height: clamp(250px, 80vw, 400px); /* Responsive height */
+    gap: 5px;
+    background-color: var(--board-bg);
+    padding: 5px;
+    border-radius: var(--border-radius);
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+}
+
+#wordLineOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allows clicks to pass through to the board */
+    z-index: 5;
+}
+
+
+.cell {
+    background-color: var(--cell-bg);
+    border: 1px solid var(--cell-border);
+    border-radius: 4px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: clamp(1em, 5vw, 1.8em); /* Responsive font size */
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    text-transform: uppercase;
+}
+
+.cell:not(.occupied):hover {
+    background-color: #e9ecef; /* Light hover for empty cells */
+}
+body:not(.light-mode) .cell:not(.occupied):hover {
+    background-color: #3a3f44;
+}
+
+
+.cell.occupied {
+    cursor: default;
+}
+
+.cell.builder {
+    background-color: var(--builder-color);
+    color: white;
+    border-color: darken(var(--builder-color), 10%);
+}
+
+.cell.saboteur {
+    background-color: var(--saboteur-color);
+    color: white;
+    border-color: darken(var(--saboteur-color), 10%);
+}
+.cell.word-path { /* For debugging or specific highlight */
+    outline: 3px solid var(--highlight-color);
+    outline-offset: -3px;
+}
+
+
+.player-hand-section, .opponent-hand-section, .ai-info, .word-list-container, .score-board, .ai-letter-display {
+    background-color: var(--background-color);
+    padding: 15px;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+
+.player-hand-title, .opponent-hand-title, .ai-title, .word-list-title, .player-title, .label {
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: var(--primary-color);
+}
+body:not(.light-mode) .player-hand-title,
+body:not(.light-mode) .opponent-hand-title,
+body:not(.light-mode) .ai-title,
+body:not(.light-mode) .word-list-title {
+    color: #77ccff;
+}
+
+
+.player-hand, .opponent-hand {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.hand-tile {
+    width: 40px;
+    height: 40px;
+    background-color: var(--hand-tile-bg);
+    border: 1px solid var(--hand-tile-border);
+    border-radius: 4px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.2em;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.2s;
+    user-select: none;
+}
+
+.hand-tile.selectable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.hand-tile.selected {
+    background-color: var(--hand-tile-selected-bg);
+    color: var(--primary-color); /* Text color for selected tile */
+    border-color: var(--primary-color);
+    transform: scale(1.1);
+}
+body:not(.light-mode) .hand-tile.selected {
+    color: var(--text-color);
+}
+
+.opponent-hand .hand-tile {
+    cursor: default;
+    opacity: 0.7; /* Make opponent tiles look slightly different */
+}
+
+
+.controls, #phaseControls {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+button, .button {
+    padding: 10px 15px;
+    font-size: 1em;
+    font-weight: bold;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+    background-color: var(--primary-color);
+    color: var(--button-text-color);
+}
+button:hover, .button:hover {
+    opacity: 0.85;
+}
+button:disabled, .button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+button.secondary {
+    background-color: var(--secondary-color);
+}
+button.secondary:hover {
+    opacity: 0.85;
+}
+button.small-btn {
+    padding: 4px 8px;
+    font-size: 0.8em;
+    margin-left: 5px;
+}
+
+
+.score-board {
+    display: flex;
+    justify-content: space-around;
+    gap: 10px;
+}
+
+.player-score {
+    text-align: center;
+    padding: 10px;
+    flex: 1;
+    border-radius: var(--border-radius);
+}
+.builder-score .player-title { color: var(--builder-color); }
+.saboteur-score .player-title { color: var(--saboteur-color); }
+
+.score-value {
+    font-size: 2em;
+    font-weight: bold;
+}
+
+.ai-letter-display .letter {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: var(--saboteur-color);
+    text-align: center;
+    min-height: 30px; /* Ensure space even if '-' */
+}
+
+
+.difficulty-selector {
+    display: flex;
+    gap: 5px;
+}
+.difficulty-btn {
+    flex-grow: 1;
+    background-color: var(--secondary-color);
+}
+.difficulty-btn.active {
+    background-color: var(--primary-color);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+
+
+.word-list {
+    max-height: 200px; /* Or adjust as needed */
+    overflow-y: auto;
+    padding-right: 10px; /* For scrollbar */
+}
+.word-item {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--cell-border);
+    display: flex;
+    align-items: center;
+}
+.word-item:last-child {
+    border-bottom: none;
+}
+.word-item input[type="checkbox"] {
+    margin-right: 10px;
+    transform: scale(1.2);
+    cursor: pointer;
+}
+.word-item span {
+    font-size: 1em;
+}
+
+.instructions {
+    margin-top: 30px;
+    padding: 15px;
+    background-color: var(--background-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+.instructions h3 {
+    margin-top: 0;
+    color: var(--primary-color);
+}
+.instructions strong.builder-text { color: var(--builder-color); }
+.instructions strong.saboteur-text { color: var(--saboteur-color); }
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+    animation: fadeIn 0.3s;
+}
+.modal-content {
+    background-color: var(--modal-bg);
+    color: var(--text-color);
+    margin: 10% auto;
+    padding: 25px;
+    border: 1px solid #888;
+    width: 80%;
+    max-width: 500px;
+    border-radius: var(--border-radius);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    text-align: center;
+}
+.modal-content h2 { margin-top: 0;}
+.modal-content input[type="text"] {
+    padding: 10px;
+    margin: 10px 0;
+    width: calc(100% - 22px); /* Full width minus padding */
+    border: 1px solid var(--cell-border);
+    border-radius: var(--border-radius);
+    background-color: var(--input-bg);
+    color: var(--text-color);
+    font-size: 1em;
+}
+.modal-hr {
+    margin: 20px 0;
+    border: 0;
+    border-top: 1px solid var(--cell-border);
+}
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.close:hover, .close:focus {
+    color: var(--text-color);
+    text-decoration: none;
+}
+.multiplayer-mode-btn {
+    position: fixed;
+    top: 10px; /* Adjusted from your example for potentially better placement */
+    right: 70px; /* Next to theme toggle */
+    z-index: 1001; /* Above most content, below modal */
+    padding: 8px 12px;
+}
+.multiplayer-status-message, .opponent-status-message {
+    margin: 12px 0;
+    font-weight: bold;
+}
+.multiplayer-status-message { color: var(--primary-color); }
+.opponent-status-message { color: var(--saboteur-color); }
+
+
+@keyframes fadeIn {
+    from {opacity: 0;}
+    to {opacity: 1;}
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    body { padding: 10px; }
+    .container { padding: 15px; }
+    header { margin: -15px -15px 15px -15px; padding: 10px 15px;}
+    header h1 { font-size: 1.8em; }
+    .tagline { font-size: 0.8em; }
+
+    .game-container {
+        flex-direction: column;
+    }
+    .board {
+        /* Width/height already clamped, this ensures it doesn't overflow flex parent */
+        max-width: 100%;
+        margin-bottom: 15px;
+    }
+    .cell { font-size: clamp(0.9em, 4vw, 1.5em); }
+    .hand-tile { width: 35px; height: 35px; font-size: 1em;}
+
+    .info-section { order: 3; /* Moves below board and player hand */ }
+    .board-section { order: 1; }
+    .current-player-hand-section { order: 2; margin-bottom: 15px; }
+
+
+    .score-board { flex-direction: column; gap: 5px; }
+    .score-value { font-size: 1.8em; }
+
+    button, .button { font-size: 0.9em; padding: 8px 12px; }
+    .controls { margin-top: 15px; }
+
+    .multiplayer-mode-btn { top: 5px; right: 5px; padding: 6px 10px; }
+    .theme-toggle { top: 10px; right: 15px; width: 30px; height: 30px; font-size: 1em;}
+    .modal-content { margin: 20% auto; width: 90%; }
+}
