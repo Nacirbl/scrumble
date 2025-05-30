@@ -5807,7 +5807,7 @@ let state = {
 // =========================
 // MULTIPLAYER STATE
 // =========================
-const MULTIPLAYER_API = 'http://localhost:8000';
+const MULTIPLAYER_API = 'https://saboteur.onrender.com';
 let multiplayer = {
     enabled: false,
     gameId: null,
