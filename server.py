@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles # Import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import uuid
@@ -16,6 +17,11 @@ app.add_middleware(
     allow_methods=["*"], # Allows all methods
     allow_headers=["*"], # Allows all headers
 )
+
+# --- Serve Static Files ---
+# Assuming index.html, script.js, and style.css are in the same directory as server.py
+# If they are in a 'static' subdirectory, change directory='.' to directory='static'
+app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 # --- Pydantic Models for Game State ---
 class Tile(BaseModel):
