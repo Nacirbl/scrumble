@@ -3,7 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Saboteur</title>
+    <title>Saboteur — two-player word duels</title>
+    <meta name="description" content="Saboteur: a two-player word duel on a 5x5 board. Build words as the Builder, jam them as the Saboteur. Free to play online, no sign-up.">
+    <meta name="theme-color" content="#007bff">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23007bff'/%3E%3Ctext x='50' y='72' font-size='62' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3ES%3C/text%3E%3C/svg%3E">
+    <meta property="og:title" content="Saboteur — two-player word duels">
+    <meta property="og:description" content="Build 5-letter words on a 5x5 board as the Builder. As the Saboteur, keep your letters out of every word. Playable online against a friend or the AI, free, no sign-up.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://saboteur.onrender.com/">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Saboteur — two-player word duels">
+    <meta name="twitter:description" content="A two-player word duel: one player builds words, the other sabotages. Play online free.">
     <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -41,10 +51,12 @@
                     <div class="player-score builder-score" id="player1ScoreDisplay">
                         <div class="player-title" id="player1RoleAndName">Builder (You)</div>
                         <div class="score-value" id="player1Score">0</div>
+                        <div class="score-sub" id="p1ScoreSub"></div>
                     </div>
                     <div class="player-score saboteur-score" id="player2ScoreDisplay">
                         <div class="player-title" id="player2RoleAndName">Saboteur (AI/Opponent)</div>
                         <div class="score-value" id="player2Score">0</div>
+                        <div class="score-sub" id="p2ScoreSub"></div>
                     </div>
                 </div>
 
@@ -77,28 +89,21 @@
             </div>
         </div>
 
-        <div class="instructions">
-            <h3>How to Play:</h3>
-            <p><strong>Objective:</strong> Be the player with the highest <strong>Builder</strong> score after two phases.</p>
-            <p><strong>Phase 1:</strong> You are the <strong class="builder-text">Builder</strong>, your opponent is the <strong class="saboteur-text">Saboteur</strong>.
-            <br><strong>Phase 2:</strong> Roles switch! You become the <strong class="saboteur-text">Saboteur</strong>, opponent is the <strong class="builder-text">Builder</strong>.</p>
-            <p><strong>Gameplay:</strong>
-                Players take turns placing one of their 10 letter tiles onto an empty square on the 5x5 board.
-                Try to form 5-letter words (horizontally, vertically, or diagonally) using adjacent tiles. Words must be in the game's dictionary.
-            </p>
-            <p><strong>Scoring (for the current Builder):</strong>
-                <ul>
-                    <li>+1 point for each of the Builder's own tiles in a valid word.</li>
-                    <li>+2 points for each of the Saboteur's tiles used in that Builder's word.</li>
-                </ul>
-            The Saboteur aims to block the Builder or trick them into using Saboteur tiles (which give the Builder more points, but might be a trap!).
-            </p>
-             <p><strong>Game End & Winning:</strong>
-                Each phase ends when all 20 tiles for that phase have been placed.
-                The player with the higher total Builder score from their turn as Builder wins.
-                If scores are tied, the player who formed their first word using fewer of their own tiles (in their Builder phase) wins.
-            </p>
-        </div>
+        <details class="instructions">
+            <summary><h3 style="display:inline">How to Play</h3></summary>
+            <p><strong>Objective:</strong> Have the higher Builder score after two phases. Each player builds once and sabotages once.</p>
+            <p><strong>Phases:</strong> In phase 1 you are the <strong class="builder-text">Builder</strong> and your opponent is the <strong class="saboteur-text">Saboteur</strong>. In phase 2 the roles swap.</p>
+            <p><strong>Gameplay:</strong> On your turn you place one of your 10 letter tiles on an empty square of the 5x5 board. Each phase ends when all 20 tiles are placed.</p>
+            <p><strong>Words:</strong> A word forms when a full row, column, or main diagonal spells a dictionary word, read in either direction. The word scores as soon as its fifth tile lands, no matter which letter of it you placed last.</p>
+            <p><strong>Scoring (for the current Builder):</strong></p>
+            <ul>
+                <li>+1 point for each of the Builder's own tiles in a valid word.</li>
+                <li>+2 points for each of the Saboteur's tiles used in that Builder's word.</li>
+                <li>Each distinct word scores once per phase, but one placement can complete several different words at once and they all count. The Found Words panel lists each word and its points; the checkbox shows the path on the board.</li>
+            </ul>
+            <p><strong>The Saboteur:</strong> earns +1 "Blocked" point for each of their placed tiles that ends the phase inside no word. Their best moves jam the board without handing the Builder a completion.</p>
+            <p><strong>Game end & winning:</strong> The player with the higher Builder score across their two phases wins. If the scores are tied, the player whose first word contained fewer of their own tiles wins.</p>
+        </details>
     </div>
 
     <div id="multiplayerModal" class="modal" style="display:none;">
@@ -123,6 +128,43 @@
         </div>
       </div>
     </div>
+
+    <div id="resultsModal" class="modal" style="display:none;">
+      <div class="modal-content results-card">
+        <h2>Game Over</h2>
+        <div id="resultsWinner" class="results-winner"></div>
+        <div id="resultsBody"></div>
+        <div class="results-buttons">
+            <button id="shareResultBtn">Share result</button>
+            <button id="copyResultBtn" class="secondary">Copy result</button>
+            <button id="playAgainBtn" class="secondary">Play vs AI</button>
+            <button id="closeResultsBtn" class="secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="tutorialModal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <h2>How to play Saboteur</h2>
+        <ol class="tutorial-steps">
+            <li>Pick a tile from your rack, then click an empty square. You have 10 tiles per phase, and there are two phases.</li>
+            <li>A full row, column, or main diagonal that spells a dictionary word scores for the Builder: +1 per own tile, +2 per opponent tile. Words count read from either end.</li>
+            <li>You build in phase 1 and sabotage in phase 2, so a tile that helps you now can hurt you later.</li>
+            <li>The Saboteur earns +1 for every placed tile that stays out of all words. The Found Words panel lists each word; its checkbox draws the path on the board.</li>
+        </ol>
+        <button id="tutorialDoneBtn">Start playing</button>
+      </div>
+    </div>
+
+    <div id="resumeModal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <h2>Resume your game?</h2>
+        <p id="resumeDetails"></p>
+        <button id="resumeBtn">Resume</button>
+        <button id="resumeNewBtn" class="secondary">Start a new game</button>
+      </div>
+    </div>
+
     <button id="multiplayerBtn" class="multiplayer-mode-btn">Play Multiplayer</button>
 
     <script src="static/script.js"></script>

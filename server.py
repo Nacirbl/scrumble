@@ -31,6 +31,13 @@ async def read_index():
 # look inside the physical 'static' directory relative to where server.py is.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# --- Health check ---
+# Used by the client's keep-alive ping (every 4 minutes while a tab is open) to
+# keep the free-tier worker from spinning down mid-match, and useful for monitoring.
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "games": len(games)}
+
 # --- Pydantic Models for Game State ---
 class Tile(BaseModel):
     letter: str
@@ -43,12 +50,14 @@ class PlayerState(BaseModel):
     originalTiles: List[Tile] = Field(default_factory=list) # Ensure this is part of state for reset
     isBuilder: bool
     score: int
+    blockPoints: Optional[int] = 0 # Saboteur counter-score: own placed tiles inside no word
     firstWordTilesLeft: Optional[int] = None
     name: str
 
 class FoundWord(BaseModel):
     word: str
     path: List[List[int]]
+    pathKey: Optional[str] = None # Canonical dedupe key for the path's cell set
     p1Tiles: int
     p2Tiles: int
     # score: int # Score is dynamic based on who is builder, calculated client-side for display
@@ -92,7 +101,7 @@ def create_game_endpoint():
     # --- Initialize the game state on the server ---
     # This should be the authoritative initial state
     initial_game_state = GameStateModel(
-        board=[[None for _ in range(10)] for _ in range(10)], # Assuming a 10x10 board, adjust if needed
+        board=[[None for _ in range(5)] for _ in range(5)], # Matches CONFIG.boardSize on the client
         player1=PlayerState(tiles=[], originalTiles=[], isBuilder=True, score=0, name="You", firstWordTilesLeft=None), # Initialize player1 state
         player2=PlayerState(tiles=[], originalTiles=[], isBuilder=False, score=0, name="Opponent", firstWordTilesLeft=None), # Initialize player2 state
         currentPlayerId="player1", # Player 1 (Host/Builder) starts
@@ -255,21 +264,37 @@ def update_state_endpoint(payload: UpdateStatePayload):
 
                              # Calculate score for the just finished builder based on foundWords from client
                              phase_builder_score = 0
+                             builder_is_p1 = just_finished_builder is current_server_state.player1
                              for found_word in current_server_state.foundWords:
-                                 if just_finished_builder.name == "Player 1": # Assuming names align with player1/player2
+                                 if builder_is_p1:
                                      phase_builder_score += found_word.p1Tiles * 1 + found_word.p2Tiles * 2
                                  else:
                                      phase_builder_score += found_word.p2Tiles * 1 + found_word.p1Tiles * 2
 
                              just_finished_builder.score = phase_builder_score # Update the total score for the builder role in this phase
 
-                             # Store First Word Tiles Left (this is calculated client side, trusting client value)
-                             # Assuming client sends this correctly in game_state updates
-                             # Check player state in current_server_state for firstWordTilesLeft
-                             if current_server_state.player1.isBuilder:
-                                 current_server_state.player1.firstWordTilesLeft = payload.game_state.player1.firstWordTilesLeft # Assuming client state is sent
-                             else:
-                                 current_server_state.player2.firstWordTilesLeft = payload.game_state.player2.firstWordTilesLeft # Assuming client state is sent
+                             # Saboteur block points: the saboteur's placed tiles that sit inside
+                             # no word. Computed from the board before it is cleared for phase 2.
+                             just_finished_saboteur = (current_server_state.player2
+                                                       if current_server_state.player1.isBuilder
+                                                       else current_server_state.player1)
+                             sab_owner = 'player1' if just_finished_saboteur is current_server_state.player1 else 'player2'
+                             word_cells = set()
+                             for found_word in current_server_state.foundWords:
+                                 for cell in found_word.path:
+                                     word_cells.add((cell[0], cell[1]))
+                             blocked = 0
+                             for r_idx, board_row in enumerate(current_server_state.board):
+                                 for c_idx, board_cell in enumerate(board_row):
+                                     if board_cell and board_cell.get('owner') == sab_owner \
+                                             and (r_idx, c_idx) not in word_cells:
+                                         blocked += 1
+                             just_finished_saboteur.blockPoints = (just_finished_saboteur.blockPoints or 0) + blocked
+
+                             # Store First Word Tiles Left for both players
+                             # (calculated client side, trusting the client's value)
+                             current_server_state.player1.firstWordTilesLeft = payload.game_state.player1.firstWordTilesLeft
+                             current_server_state.player2.firstWordTilesLeft = payload.game_state.player2.firstWordTilesLeft
 
 
                              if current_server_state.currentPhase == 1:

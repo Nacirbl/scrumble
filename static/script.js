@@ -5780,6 +5780,7 @@ let state = {
         originalTiles: [],
         isBuilder: true,
         score: 0,
+        blockPoints: 0,
         firstWordTilesLeft: null,
         name: "Player 1"
     },
@@ -5788,6 +5789,7 @@ let state = {
         originalTiles: [],
         isBuilder: false,
         score: 0,
+        blockPoints: 0,
         firstWordTilesLeft: null,
         name: "Player 2"
     },
@@ -5797,17 +5799,22 @@ let state = {
     selectedTile: null,
     moveHistory: [],
     foundWords: [],
+    gameWords: [],
     visibleWordLineIndices: new Set(),
     gameMode: 'ai',
     gameOver: false,
     statusText: "Initializing...",
     endOfPhase1Board: null,
+    lastResults: null,
 };
 
 // =========================
 // MULTIPLAYER STATE
 // =========================
-const MULTIPLAYER_API = 'https://saboteur.onrender.com';
+// Same-origin base: the FastAPI server also serves this page, so relative fetch
+// work both locally (uvicorn) and on Render. Fall back to the absolute URL when
+// the page is opened over file://, where relative fetches fail.
+const MULTIPLAYER_API = window.location.protocol.startsWith('http') ? '' : 'https://saboteur.onrender.com';
 let multiplayer = {
     enabled: false,
     gameId: null,
@@ -5863,6 +5870,25 @@ const domElements = {
     playerRoleDisplay: document.getElementById('playerRoleDisplay'),
     opponentStatus: document.getElementById('opponentStatus'),
     startGameBtn: document.getElementById('startGameBtn'),
+    // Score sub-lines
+    p1ScoreSub: document.getElementById('p1ScoreSub'),
+    p2ScoreSub: document.getElementById('p2ScoreSub'),
+    // Results modal
+    resultsModal: document.getElementById('resultsModal'),
+    resultsWinner: document.getElementById('resultsWinner'),
+    resultsBody: document.getElementById('resultsBody'),
+    shareResultBtn: document.getElementById('shareResultBtn'),
+    copyResultBtn: document.getElementById('copyResultBtn'),
+    playAgainBtn: document.getElementById('playAgainBtn'),
+    closeResultsBtn: document.getElementById('closeResultsBtn'),
+    // First-run tutorial
+    tutorialModal: document.getElementById('tutorialModal'),
+    tutorialDoneBtn: document.getElementById('tutorialDoneBtn'),
+    // Resume offer
+    resumeModal: document.getElementById('resumeModal'),
+    resumeBtn: document.getElementById('resumeBtn'),
+    resumeNewBtn: document.getElementById('resumeNewBtn'),
+    resumeDetails: document.getElementById('resumeDetails'),
 };
 
 // =========================
@@ -5890,8 +5916,39 @@ function shuffleArray(array) {
 // =========================
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
-    initializeGame();
+    startKeepAlivePing();
+    // Read the snapshot before initializeGame(): the fresh game's first
+    // saveStateToHistory would overwrite it. While the offer is open,
+    // persistence is suppressed so the snapshot survives until the choice.
+    const saved = loadPersistedAiGame();
+    if (saved && (saved.placedTilesThisPhase || 0) > 0) {
+        suppressPersistenceUntilDecision = true;
+        initializeGame('ai');
+        showResumeOffer(saved);
+    } else {
+        initializeGame('ai');
+        if (!lsGet('saboteurTutorialSeen')) {
+            domElements.tutorialModal.style.display = 'block';
+        }
+    }
 });
+
+function lsGet(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
+function lsSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) {}
+}
+
+function showResumeOffer(snap) {
+    if (!domElements.resumeModal) return;
+    const phase = snap.currentPhase || 1;
+    const placed = snap.placedTilesThisPhase || 0;
+    domElements.resumeDetails.textContent =
+        `A game against the AI is in progress (phase ${phase}, ${placed} of 20 tiles placed). Resume it or start fresh?`;
+    domElements.resumeModal.style.display = 'block';
+}
 
 function setupEventListeners() {
     domElements.newGameBtn.addEventListener('click', () => initializeGame('ai'));
@@ -5921,6 +5978,37 @@ function setupEventListeners() {
     domElements.copyGameCodeBtn.addEventListener('click', () => copyToClipboard(multiplayer.gameId, 'Game Code'));
     domElements.copyInviteLinkBtn.addEventListener('click', () => copyToClipboard(domElements.inviteLinkInput.value, 'Invite Link'));
 
+    // Results modal
+    if (domElements.shareResultBtn) domElements.shareResultBtn.addEventListener('click', shareResults);
+    if (domElements.copyResultBtn) domElements.copyResultBtn.addEventListener('click',
+        () => copyToClipboard(state.lastResults ? state.lastResults.shareText : '', 'Result'));
+    if (domElements.playAgainBtn) domElements.playAgainBtn.addEventListener('click', () => {
+        domElements.resultsModal.style.display = 'none';
+        initializeGame('ai');
+    });
+    if (domElements.closeResultsBtn) domElements.closeResultsBtn.addEventListener('click',
+        () => { domElements.resultsModal.style.display = 'none'; });
+
+    // First-run tutorial
+    if (domElements.tutorialDoneBtn) domElements.tutorialDoneBtn.addEventListener('click', () => {
+        domElements.tutorialModal.style.display = 'none';
+        lsSet('saboteurTutorialSeen', '1');
+    });
+
+    // Resume offer
+    if (domElements.resumeBtn) domElements.resumeBtn.addEventListener('click', () => {
+        domElements.resumeModal.style.display = 'none';
+        suppressPersistenceUntilDecision = false;
+        const snap = loadPersistedAiGame();
+        if (snap) resumePersistedGame(snap);
+    });
+    if (domElements.resumeNewBtn) domElements.resumeNewBtn.addEventListener('click', () => {
+        domElements.resumeModal.style.display = 'none';
+        suppressPersistenceUntilDecision = false;
+        clearPersistedAiGame();
+        initializeGame('ai');
+    });
+
     checkUrlForGameCode();
     applyInitialTheme();
 }
@@ -5930,6 +6018,14 @@ function initializeGame(mode = 'ai') {
     state.gameMode = mode;
     state.gameOver = false;
     state.currentPhase = 1;
+    state.player1.score = 0;
+    state.player2.score = 0;
+    state.player1.blockPoints = 0;
+    state.player2.blockPoints = 0;
+    state.player1.firstWordTilesLeft = null;
+    state.player2.firstWordTilesLeft = null;
+    state.gameWords = [];
+    state.lastResults = null;
     state.board = Array(CONFIG.boardSize).fill(null).map(() => Array(CONFIG.boardSize).fill(null));
 
     generateInitialTilesForAllPlayers();
@@ -6022,6 +6118,10 @@ function switchPhase() {
     });
     justFinishedBuilder.score = phaseBuilderScore;
 
+    // The Saboteur's block points must be counted before the board is cleared.
+    const justFinishedSaboteur = justFinishedBuilder === state.player1 ? state.player2 : state.player1;
+    justFinishedSaboteur.blockPoints = (justFinishedSaboteur.blockPoints || 0) + computeSaboteurPhaseScore(justFinishedSaboteur);
+
     if (state.currentPhase === 1) {
         state.endOfPhase1Board = deepClone(state.board);
         state.currentPhase = 2;
@@ -6063,30 +6163,79 @@ function switchPhase() {
 }
 
 function calculateAndDisplayFinalResults() {
-    let resultText = "<h2>Game Over! Results:</h2>";
+    const results = buildResultsSummary();
+    state.lastResults = results;
+    setStatus(`Game over. ${results.winnerText}`);
+    showResultsModal(results);
+    clearPersistedAiGame();
+    domElements.phaseControls.innerHTML = '';
+}
 
-    resultText += `<p><strong>${state.player1.name} (as Builder):</strong> Score: ${state.player1.score}, First Word Tiles Left: ${state.player1.firstWordTilesLeft ?? 'N/A'}</p>`;
-    resultText += `<p><strong>${state.player2.name} (as Builder):</strong> Score: ${state.player2.score}, First Word Tiles Left: ${state.player2.firstWordTilesLeft ?? 'N/A'}</p>`;
-
+function buildResultsSummary() {
+    const p1 = state.player1, p2 = state.player2;
     let winnerText = "";
-    if (state.player1.score > state.player2.score) {
-        winnerText = `${state.player1.name} wins!`;
-    } else if (state.player2.score > state.player1.score) {
-        winnerText = `${state.player2.name} wins!`;
+    if (p1.score > p2.score) {
+        winnerText = `${p1.name} wins!`;
+    } else if (p2.score > p1.score) {
+        winnerText = `${p2.name} wins!`;
     } else {
-        const p1FWTL = state.player1.firstWordTilesLeft ?? Infinity;
-        const p2FWTL = state.player2.firstWordTilesLeft ?? Infinity;
+        const p1FWTL = p1.firstWordTilesLeft ?? Infinity;
+        const p2FWTL = p2.firstWordTilesLeft ?? Infinity;
         if (p1FWTL < p2FWTL) {
-            winnerText = `${state.player1.name} wins on tie-breaker (fewer tiles left for first word)!`;
+            winnerText = `${p1.name} wins on tie-breaker (first word built with fewer own tiles)!`;
         } else if (p2FWTL < p1FWTL) {
-            winnerText = `${state.player2.name} wins on tie-breaker (fewer tiles left for first word)!`;
+            winnerText = `${p2.name} wins on tie-breaker (first word built with fewer own tiles)!`;
         } else {
             winnerText = "It's a perfect draw!";
         }
     }
-    resultText += `<h3>${winnerText}</h3>`;
-    setStatusHTML(resultText);
-    domElements.phaseControls.innerHTML = '';
+
+    const allWords = (state.gameWords || []).map(gw => `${gw.word} (+${gw.points} for ${gw.builderName})`);
+    const shownWords = allWords.slice(0, 12);
+    if (allWords.length > shownWords.length) {
+        shownWords.push(`+${allWords.length - shownWords.length} more`);
+    }
+    const shareText =
+        `Saboteur: ${p1.name} ${p1.score} - ${p2.score} ${p2.name}. ` +
+        (shownWords.length ? `Words: ${shownWords.join(', ')}. ` : '') +
+        `Play at ${window.location.origin}/`;
+
+    return { winnerText, shareText };
+}
+
+function showResultsModal(results) {
+    const p1 = state.player1, p2 = state.player2;
+    domElements.resultsWinner.textContent = results.winnerText;
+    const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const wordRows = (state.gameWords || [])
+        .map(gw => `<div><strong>${esc(gw.word)}</strong> +${gw.points} for ${esc(gw.builderName)} (phase ${gw.phase})</div>`)
+        .join('');
+    domElements.resultsBody.innerHTML =
+        `<div class="results-table">
+            <div class="results-player">
+                <h4>${esc(p1.name)}</h4>
+                <div>Builder score: <strong>${p1.score}</strong></div>
+                <div>Blocked as Saboteur: <strong>${p1.blockPoints || 0}</strong></div>
+                <div>First word own tiles: <strong>${p1.firstWordTilesLeft ?? 'none'}</strong></div>
+            </div>
+            <div class="results-player">
+                <h4>${esc(p2.name)}</h4>
+                <div>Builder score: <strong>${p2.score}</strong></div>
+                <div>Blocked as Saboteur: <strong>${p2.blockPoints || 0}</strong></div>
+                <div>First word own tiles: <strong>${p2.firstWordTilesLeft ?? 'none'}</strong></div>
+            </div>
+        </div>
+        ${wordRows ? `<div class="results-words">${wordRows}</div>` : '<p>No words were completed this game.</p>'}`;
+    domElements.resultsModal.style.display = 'block';
+}
+
+function shareResults() {
+    const text = state.lastResults ? state.lastResults.shareText : '';
+    if (navigator.share) {
+        navigator.share({ title: 'Saboteur', text, url: `${window.location.origin}/` }).catch(() => {});
+    } else {
+        copyToClipboard(text, 'Result');
+    }
 }
 
 // =========================
@@ -6151,23 +6300,7 @@ function placeTile(row, col) {
     state.placedTilesThisPhase++;
     state.selectedTile = null;
 
-    const newWordsFound = findWordsThroughTile(row, col);
-    if (newWordsFound.length > 0) {
-        const currentBuilder = state.player1.isBuilder ? state.player1 : state.player2;
-        if (currentBuilder.firstWordTilesLeft === null) {
-            currentBuilder.firstWordTilesLeft = currentBuilder.tiles.filter(t => !t.used).length;
-        }
-        newWordsFound.forEach(wordObj => {
-            const isDuplicate = state.foundWords.some(existingWord =>
-                existingWord.word === wordObj.word &&
-                JSON.stringify(existingWord.path.sort()) === JSON.stringify(wordObj.path.sort())
-            );
-            if (!isDuplicate) {
-                state.foundWords.push(wordObj);
-                state.visibleWordLineIndices.add(state.foundWords.length - 1);
-            }
-        });
-    }
+    registerFoundWords(findWordsThroughTile(row, col));
 
     const lastPlayerId = state.currentPlayerId; // Capture current player before changing
 
@@ -6204,53 +6337,148 @@ function placeTile(row, col) {
     }
 }
 
+// Word scan (straight lines): on a 5x5 board a five-letter word occupies a
+// whole row, column, or one of the two main diagonals. A line scores as soon
+// as its fifth tile lands, read in either direction. This is the rule the
+// instructions state; free Boggle paths made a near-full board erupt into
+// dozens of words, which reads as noise rather than skill.
+const LINES_5 = (() => {
+    const size = CONFIG.boardSize;
+    const lines = [];
+    for (let r = 0; r < size; r++)
+        lines.push(Array.from({ length: size }, (_, c) => [r, c]));
+    for (let c = 0; c < size; c++)
+        lines.push(Array.from({ length: size }, (_, r) => [r, c]));
+    lines.push(Array.from({ length: size }, (_, i) => [i, i]));
+    lines.push(Array.from({ length: size }, (_, i) => [i, size - 1 - i]));
+    return lines;
+})();
+
 function findWordsThroughTile(row, col) {
     const wordsFound = [];
-    const directions = [
-        [-1, 0], [1, 0], [0, -1], [0, 1],
-        [-1, -1], [-1, 1], [1, -1], [1, 1]
-    ];
+    for (const line of LINES_5) {
+        if (!line.some(([r, c]) => r === row && c === col)) continue;
+        if (line.some(([r, c]) => !state.board[r][c])) continue; // line not complete yet
 
-    function dfs(path, visitedCells) {
-        const [currR, currC] = path[path.length - 1];
+        const letters = line.map(([r, c]) => state.board[r][c].letter).join('');
+        const reversed = letters.split('').reverse().join('');
+        let word = null;
+        if (CONFIG.dictionary.has(letters.toLowerCase())) word = letters;
+        else if (CONFIG.dictionary.has(reversed.toLowerCase())) word = reversed;
+        if (!word) continue;
 
-        if (path.length === CONFIG.wordLength) {
-            const word = path.map(([r, c]) => state.board[r][c].letter).join('');
-            if (CONFIG.dictionary.has(word.toLowerCase())) {
-                let p1Tiles = 0;
-                let p2Tiles = 0;
-                path.forEach(([r, c]) => {
-                    if (state.board[r][c].owner === 'player1') p1Tiles++;
-                    else if (state.board[r][c].owner === 'player2') p2Tiles++;
-                });
-                wordsFound.push({ word: word, path: deepClone(path).sort(), p1Tiles, p2Tiles });
-            }
-            return;
+        let p1Tiles = 0, p2Tiles = 0;
+        line.forEach(([r, c]) => {
+            if (state.board[r][c].owner === 'player1') p1Tiles++;
+            else if (state.board[r][c].owner === 'player2') p2Tiles++;
+        });
+        wordsFound.push({ word, path: deepClone(line), pathKey: canonicalPathKey(line), p1Tiles, p2Tiles });
+    }
+    return wordsFound;
+}
+
+// =========================
+// WORD SCORING HELPERS
+// =========================
+const WORD_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+
+function canonicalPathKey(path) {
+    return [...path]
+        .sort((a, b) => (a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]))
+        .map(([r, c]) => `${r},${c}`)
+        .join('|');
+}
+
+function wordFormationKey(fw) {
+    const key = fw.pathKey || canonicalPathKey(fw.path || []);
+    return `${fw.word}|${key}`;
+}
+
+function wordPointsForBuilder(fw, builder) {
+    if (builder === state.player1) return fw.p1Tiles * 1 + fw.p2Tiles * 2;
+    return fw.p2Tiles * 1 + fw.p1Tiles * 2;
+}
+
+// Words not yet scored this phase (each distinct word scores once per phase).
+function isWordScored(word) {
+    return state.foundWords.some(fw => fw.word.toLowerCase() === word.toLowerCase());
+}
+
+function unscoredWords(words) {
+    return words.filter(w => !isWordScored(w.word));
+}
+
+// Adds newly found words to the phase list: dedupes against earlier placements,
+// records the first-word tie-breaker (the builder's own tile count inside their
+// first completed word, lower wins the end-of-game tie) and fires the toast and
+// score pulse. Used by both placeTile and makeAIMove so the two paths cannot drift.
+function registerFoundWords(newWords) {
+    if (!newWords || newWords.length === 0) return;
+    // A distinct word scores once per phase. On a near-full 5x5 board the same
+    // word can be traced by many different paths; only its first completion
+    // counts, which keeps scores legible and matches standard word-game rules.
+    const scoredWords = new Set(state.foundWords.map(fw => fw.word.toLowerCase()));
+    const existingFormations = new Set(state.foundWords.map(wordFormationKey));
+    const builder = state.player1.isBuilder ? state.player1 : state.player2;
+    newWords.forEach(w => {
+        if (scoredWords.has(w.word.toLowerCase())) return;
+        const key = wordFormationKey(w);
+        if (existingFormations.has(key)) return;
+        existingFormations.add(key);
+        scoredWords.add(w.word.toLowerCase());
+        if (!w.pathKey) w.pathKey = canonicalPathKey(w.path || []);
+        state.foundWords.push(w);
+        state.visibleWordLineIndices.add(state.foundWords.length - 1);
+        if (builder.firstWordTilesLeft === null) {
+            builder.firstWordTilesLeft = (builder === state.player1) ? w.p1Tiles : w.p2Tiles;
         }
+        const pts = wordPointsForBuilder(w, builder);
+        if (!state.gameWords) state.gameWords = [];
+        state.gameWords.push({ word: w.word, points: pts, phase: state.currentPhase, builderName: builder.name });
+        showToast(`+${pts}  ${w.word}`, true);
+        pulseScore(builder);
+    });
+}
 
-        for (const [dr, dc] of directions) {
-            const nextR = currR + dr;
-            const nextC = currC + dc;
-            const cellKey = `${nextR},${nextC}`;
-
-            if (nextR >= 0 && nextR < CONFIG.boardSize &&
-                nextC >= 0 && nextC < CONFIG.boardSize &&
-                state.board[nextR][nextC] &&
-                !visitedCells.has(cellKey)) {
-
-                visitedCells.add(cellKey);
-                path.push([nextR, nextC]);
-                dfs(path, visitedCells);
-                path.pop();
-                visitedCells.delete(cellKey);
-            }
+// The Saboteur's counter-score: +1 for each of their tiles on the board that
+// ends up in none of the phase's words (tiles still in hand do not count).
+function computeSaboteurPhaseScore(saboteurState) {
+    const sabId = saboteurState === state.player1 ? 'player1' : 'player2';
+    const inWord = new Set();
+    state.foundWords.forEach(fw => {
+        (fw.path || []).forEach(([r, c]) => inWord.add(`${r},${c}`));
+    });
+    let blocked = 0;
+    for (let r = 0; r < CONFIG.boardSize; r++) {
+        for (let c = 0; c < CONFIG.boardSize; c++) {
+            const t = state.board[r][c];
+            if (t && t.owner === sabId && !inWord.has(`${r},${c}`)) blocked++;
         }
     }
+    return blocked;
+}
 
-    const initialVisited = new Set();
-    initialVisited.add(`${row},${col}`);
-    dfs([[row, col]], initialVisited);
-    return wordsFound;
+function showToast(text, isBuilderPoints) {
+    let host = document.getElementById('toastHost');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'toastHost';
+        document.body.appendChild(host);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast' + (isBuilderPoints ? ' toast-builder' : '');
+    toast.textContent = text;
+    host.appendChild(toast);
+    setTimeout(() => toast.classList.add('toast-out'), 1200);
+    setTimeout(() => toast.remove(), 1700);
+}
+
+function pulseScore(builder) {
+    const el = builder === state.player1 ? domElements.player1Score : domElements.player2Score;
+    if (!el) return;
+    el.classList.remove('score-pulse');
+    void el.offsetWidth; // restart the CSS animation
+    el.classList.add('score-pulse');
 }
 
 // =========================
@@ -6276,6 +6504,92 @@ function saveStateToHistory() {
         state.moveHistory.shift();
     }
     domElements.undoBtn.disabled = state.moveHistory.length <= 1 || state.gameOver;
+    persistGameState();
+}
+
+// =========================
+// RESUME & KEEP-ALIVE
+// =========================
+const AI_PERSIST_KEY = 'saboteurAiGameV1';
+let suppressPersistenceUntilDecision = false;
+
+// Saves the current AI match to localStorage so a closed tab does not cost the
+// player a game. Multiplayer games are not persisted; the server holds those.
+function persistGameState() {
+    if (suppressPersistenceUntilDecision) return;
+    if (state.gameMode !== 'ai' || state.gameOver) return;
+    try {
+        const snapshot = {
+            board: state.board,
+            player1: state.player1,
+            player2: state.player2,
+            currentPlayerId: state.currentPlayerId,
+            currentPhase: state.currentPhase,
+            placedTilesThisPhase: state.placedTilesThisPhase,
+            foundWords: state.foundWords,
+            gameWords: state.gameWords,
+            statusText: state.statusText,
+            endOfPhase1Board: state.endOfPhase1Board,
+            visibleWordLineIndices: [...state.visibleWordLineIndices]
+        };
+        localStorage.setItem(AI_PERSIST_KEY, JSON.stringify(snapshot));
+    } catch (e) {
+        // Storage unavailable (private mode, quota): resume is a bonus, not a requirement.
+    }
+}
+
+function clearPersistedAiGame() {
+    try { localStorage.removeItem(AI_PERSIST_KEY); } catch (e) {}
+}
+
+function loadPersistedAiGame() {
+    try {
+        const raw = localStorage.getItem(AI_PERSIST_KEY);
+        if (!raw) return null;
+        const snap = JSON.parse(raw);
+        if (!snap || snap.gameOver || !Array.isArray(snap.board)) return null;
+        return snap;
+    } catch (e) {
+        return null;
+    }
+}
+
+function resumePersistedGame(snap) {
+    state.gameMode = 'ai';
+    state.board = snap.board;
+    state.player1 = snap.player1;
+    state.player2 = snap.player2;
+    [state.player1, state.player2].forEach(p => {
+        p.blockPoints = p.blockPoints || 0;
+        p.firstWordTilesLeft = (p.firstWordTilesLeft === undefined) ? null : p.firstWordTilesLeft;
+    });
+    state.currentPlayerId = snap.currentPlayerId;
+    state.currentPhase = snap.currentPhase || 1;
+    state.placedTilesThisPhase = snap.placedTilesThisPhase || 0;
+    state.foundWords = snap.foundWords || [];
+    state.gameWords = snap.gameWords || [];
+    state.statusText = snap.statusText || '';
+    state.endOfPhase1Board = snap.endOfPhase1Board || null;
+    state.visibleWordLineIndices = new Set(snap.visibleWordLineIndices || []);
+    state.moveHistory = [];
+    state.selectedTile = null;
+    state.gameOver = false;
+    renderAll();
+    updateScoresAndWordList();
+    updateStatus();
+    saveStateToHistory();
+    // If the AI was the side to move when the tab closed, let it move now.
+    if (getCurrentPlayerState().name === "AI") setTimeout(makeAIMove, 800);
+}
+
+// Periodic ping keeps the free Render worker warm while a tab is open, so
+// returning players and multiplayer invites do not hit a cold start.
+let keepAliveIntervalId = null;
+function startKeepAlivePing() {
+    if (keepAliveIntervalId) return;
+    keepAliveIntervalId = setInterval(() => {
+        fetch(`${MULTIPLAYER_API}/healthz`, { method: 'GET' }).catch(() => {});
+    }, 240000); // every 4 minutes
 }
 
 function undoMove() {
@@ -6312,6 +6626,7 @@ function undoMove() {
         domElements.opponentLastLetter.textContent = "-";
     }
     domElements.undoBtn.disabled = state.moveHistory.length <= 1 || state.gameOver;
+    persistGameState();
 }
 
 // =========================
@@ -6356,23 +6671,7 @@ function makeAIMove() {
     state.placedTilesThisPhase++;
     domElements.opponentLastLetter.textContent = tileToPlay.letter;
 
-    const newWordsFound = findWordsThroughTile(row, col);
-    if (newWordsFound.length > 0) {
-        const currentBuilder = state.player1.isBuilder ? state.player1 : state.player2;
-        if (currentBuilder.firstWordTilesLeft === null && currentBuilder === aiPlayerState) {
-            currentBuilder.firstWordTilesLeft = currentBuilder.tiles.filter(t => !t.used).length;
-        }
-        newWordsFound.forEach(wordObj => {
-            const isDuplicate = state.foundWords.some(existingWord =>
-                existingWord.word === wordObj.word &&
-                JSON.stringify(existingWord.path.sort()) === JSON.stringify(wordObj.path.sort())
-            );
-            if (!isDuplicate) {
-                state.foundWords.push(wordObj);
-                state.visibleWordLineIndices.add(state.foundWords.length - 1);
-            }
-        });
-    }
+    registerFoundWords(findWordsThroughTile(row, col));
 
     state.currentPlayerId = (state.currentPlayerId === 'player1') ? 'player2' : 'player1';
 
@@ -6401,54 +6700,163 @@ function calculateAIMove() {
     const availableTiles = aiPlayerState.tiles.filter(t => !t.used);
     if (availableTiles.length === 0) return {};
 
-    let bestMove = { r: -1, c: -1, tileToPlay: null, score: -Infinity };
-
     if (CONFIG.aiDifficulty === 1) {
         const randomCell = availableCells[Math.floor(Math.random() * availableCells.length)];
         const randomTile = availableTiles[Math.floor(Math.random() * availableTiles.length)];
         return { row: randomCell.r, col: randomCell.c, tileToPlay: randomTile };
     }
 
+    const builder = state.player1.isBuilder ? state.player1 : state.player2;
+    const existingKeys = new Set(state.foundWords.map(wordFormationKey));
+    const isSaboteur = !aiPlayerState.isBuilder;
+
+    // For the Saboteur: empty cells where the Builder could complete a word
+    // with one of the tiles the Builder still holds (racks are public in this game).
+    const threats = isSaboteur ? computeBuilderThreats(existingKeys) : [];
+    const threatByCell = new Map(threats.map(t => [`${t.r},${t.c}`, t.points]));
+
+    // Stage 1: score every (cell, tile) candidate on its immediate effect.
+    const scoredMoves = [];
     for (const cell of availableCells) {
         for (const tile of availableTiles) {
-            let currentScore = 0;
             state.board[cell.r][cell.c] = { letter: tile.letter, owner: state.currentPlayerId };
 
-            if (aiPlayerState.isBuilder) {
-                const words = findWordsThroughTile(cell.r, cell.c);
-                words.forEach(w => {
-                    currentScore += (state.currentPlayerId === 'player1' ? w.p1Tiles : w.p2Tiles) * 1;
-                    currentScore += (state.currentPlayerId === 'player1' ? w.p2Tiles : w.p1Tiles) * 2;
-                });
-            }
+            const newWords = unscoredWords(findWordsThroughTile(cell.r, cell.c))
+                .filter(w => !existingKeys.has(wordFormationKey(w)));
+            let builderGain = 0;
+            newWords.forEach(w => { builderGain += wordPointsForBuilder(w, builder); });
 
-            currentScore += Math.random() * 2;
-            const opponentPlayerId = state.currentPlayerId === 'player1' ? 'player2' : 'player1';
-            getNeighbors(cell.r, cell.c).forEach(([nr, nc]) => {
-                const neighborCell = state.board[nr][nc];
-                if (neighborCell && neighborCell.owner === opponentPlayerId) {
-                     currentScore += (CONFIG.aiDifficulty > 1 ? 0.5 : 0.1); // Add points for blocking
-                }
-                // Consider if this placement helps the opponent
-                // (More complex: simulate opponent's best response to this AI move)
-            });
-
-
-            if (currentScore > bestMove.score) {
-                bestMove = { r: cell.r, c: cell.c, tileToPlay: tile, score: currentScore };
+            let score = 0;
+            if (isSaboteur) {
+                // Never hand the Builder a word: own tiles inside it cost double.
+                score -= builderGain * 10;
+                const occupiedThreat = threatByCell.get(`${cell.r},${cell.c}`) || 0;
+                score += occupiedThreat * (CONFIG.aiDifficulty >= 3 ? 8 : 4);
+                // A common letter beside Builder tiles is easy to fold into a word;
+                // a rare letter sitting there is safe.
+                const adjBuilderTiles = getNeighbors(cell.r, cell.c).filter(([nr, nc]) => {
+                    const n = state.board[nr][nc];
+                    return n && n.owner !== state.currentPlayerId;
+                }).length;
+                score -= adjBuilderTiles * letterUtility(tile.letter) * 1.5;
+            } else {
+                score += builderGain * 10;
+                // Dump rare letters first and keep the useful ones for future words.
+                score -= letterUtility(tile.letter) * 0.5;
             }
 
             state.board[cell.r][cell.c] = null;
+            scoredMoves.push({ r: cell.r, c: cell.c, tile, score });
         }
     }
+    scoredMoves.sort((a, b) => b.score - a.score);
 
-    if (bestMove.tileToPlay) {
-        return { row: bestMove.r, col: bestMove.c, tileToPlay: bestMove.tileToPlay };
-    } else {
-        const randomCell = availableCells[Math.floor(Math.random() * availableCells.length)];
-        const randomTile = availableTiles[Math.floor(Math.random() * availableTiles.length)];
-        return { row: randomCell.r, col: randomCell.c, tileToPlay: randomTile };
+    // Stage 2 (Hard only): re-examine the best few moves one ply deeper.
+    if (CONFIG.aiDifficulty >= 3) {
+        const shortlist = scoredMoves.slice(0, 5);
+        let best = null, bestValue = -Infinity;
+        for (const move of shortlist) {
+            state.board[move.r][move.c] = { letter: move.tile.letter, owner: state.currentPlayerId };
+            let value = move.score;
+            if (isSaboteur) {
+                // Whatever is left for the Builder's best reply after this move is bad news.
+                const replyThreats = computeBuilderThreats(existingKeys);
+                const worstReply = replyThreats.reduce((m, t) => Math.max(m, t.points), 0);
+                value -= worstReply * 5;
+            } else {
+                // Cells that would let the AI complete a word on its next turn.
+                value += setupPotential(move.r, move.c, aiPlayerState, move.tile.id, existingKeys) * 3;
+            }
+            state.board[move.r][move.c] = null;
+            if (value > bestValue) { bestValue = value; best = move; }
+        }
+        if (best) return { row: best.r, col: best.c, tileToPlay: best.tile };
     }
+
+    const maxScore = scoredMoves[0].score;
+    const ties = scoredMoves.filter(m => Math.abs(m.score - maxScore) < 1e-9);
+    const chosen = ties[Math.floor(Math.random() * ties.length)];
+    return { row: chosen.r, col: chosen.c, tileToPlay: chosen.tile };
+}
+
+// Empty cells where the current Builder could complete at least one new word by
+// playing one letter from their rack. Returns {r, c, points} with the best
+// completion value per cell. Letters are simulated one per distinct letter only.
+function computeBuilderThreats(existingKeys) {
+    const builder = state.player1.isBuilder ? state.player1 : state.player2;
+    const builderId = (builder === state.player1) ? 'player1' : 'player2';
+    const rack = builder.tiles.filter(t => !t.used);
+    const threats = [];
+    for (let r = 0; r < CONFIG.boardSize; r++) {
+        for (let c = 0; c < CONFIG.boardSize; c++) {
+            if (state.board[r][c]) continue;
+            // A completion needs four existing letters, so only cells touching the
+            // current cluster can matter.
+            const touchesBoard = getNeighbors(r, c).some(([nr, nc]) => state.board[nr][nc]);
+            if (!touchesBoard) continue;
+            let bestPoints = 0;
+            const triedLetters = new Set();
+            for (const tile of rack) {
+                if (triedLetters.has(tile.letter)) continue;
+                triedLetters.add(tile.letter);
+                state.board[r][c] = { letter: tile.letter, owner: builderId };
+                unscoredWords(findWordsThroughTile(r, c)).forEach(w => {
+                    if (!existingKeys.has(wordFormationKey(w))) {
+                        bestPoints = Math.max(bestPoints, wordPointsForBuilder(w, builder));
+                    }
+                });
+                state.board[r][c] = null;
+            }
+            if (bestPoints > 0) threats.push({ r, c, points: bestPoints });
+        }
+    }
+    return threats;
+}
+
+// Builder lookahead: value of the completion cells this placement would create
+// next to itself, using the AI's remaining rack. Called with the candidate tile
+// already on the board.
+function setupPotential(r, c, playerState, placedTileId, existingKeys) {
+    const playerId = playerState === state.player1 ? 'player1' : 'player2';
+    const rack = playerState.tiles.filter(t => !t.used && t.id !== placedTileId);
+    let potential = 0;
+    for (const [nr, nc] of getNeighbors(r, c)) {
+        if (state.board[nr][nc]) continue;
+        const tried = new Set();
+        let bestPoints = 0;
+        for (const tile of rack) {
+            if (tried.has(tile.letter)) continue;
+            tried.add(tile.letter);
+            state.board[nr][nc] = { letter: tile.letter, owner: playerId };
+            findWordsThroughTile(nr, nc).forEach(w => {
+                if (!existingKeys.has(wordFormationKey(w))) {
+                    bestPoints = Math.max(bestPoints, wordPointsForBuilder(w, playerState));
+                }
+            });
+            state.board[nr][nc] = null;
+        }
+        if (bestPoints > 0) potential += bestPoints;
+    }
+    return potential;
+}
+
+// Share of dictionary words containing a letter, computed once. Vowels and T/S
+// score high, Q/X/Z/J/V/K low. The Builder dumps low-utility letters early;
+// the Saboteur parks them beside Builder tiles.
+let _letterUtility = null;
+function letterUtility(letter) {
+    if (!_letterUtility) {
+        _letterUtility = {};
+        let total = 0;
+        CONFIG.dictionary.forEach(word => {
+            new Set(word.toUpperCase().split('')).forEach(ch => {
+                _letterUtility[ch] = (_letterUtility[ch] || 0) + 1;
+            });
+            total++;
+        });
+        Object.keys(_letterUtility).forEach(ch => { _letterUtility[ch] /= (total || 1); });
+    }
+    return _letterUtility[String(letter).toUpperCase()] || 0;
 }
 
 function getNeighbors(r, c) {
@@ -6586,6 +6994,17 @@ function updateScoresAndWordList() {
     domElements.player2Score.textContent = state.player2.isBuilder ? currentPhaseBuilderScore : state.player2.score;
     const p2Name = (multiplayer.enabled && multiplayer.localPlayerId === 'player2') ? "You" : state.player2.name;
     domElements.player2RoleAndName.textContent = `${p2Name} ${state.player2.isBuilder ? "(Builder)" : "(Saboteur)"}`;
+
+    // Sub-line under each score: the player's own block points (as Saboteur),
+    // counted live while they are still the Saboteur.
+    const liveBlock = computeSaboteurPhaseScore(state.player1.isBuilder ? state.player2 : state.player1);
+    const subFor = (player) => {
+        const stored = player.blockPoints || 0;
+        const total = player.isBuilder ? stored : stored + liveBlock;
+        return `Blocked: ${total}`;
+    };
+    if (domElements.p1ScoreSub) domElements.p1ScoreSub.textContent = subFor(state.player1);
+    if (domElements.p2ScoreSub) domElements.p2ScoreSub.textContent = subFor(state.player2);
 
     domElements.wordList.innerHTML = '';
     if (state.foundWords.length === 0) {
@@ -6886,6 +7305,8 @@ function startMultiplayerPolling() {
     console.log("Multiplayer polling started.");
 }
 
+let consecutivePollFailures = 0;
+
 async function pollServerForState() {
     if (!multiplayer.enabled || !multiplayer.gameId || !multiplayer.localPlayerId) return;
 
@@ -6897,9 +7318,14 @@ async function pollServerForState() {
                 handleMultiplayerError("Game session not found. It might have ended or expired.");
             } else {
                 console.warn(`Error polling server: ${response.statusText}`);
+                consecutivePollFailures++;
+            }
+            if (consecutivePollFailures >= 20) {
+                handleMultiplayerError("Lost contact with the game server (it may have restarted). Your match cannot continue.");
             }
             return;
         }
+        consecutivePollFailures = 0;
         const serverData = await response.json();
         console.log("[POLL] Received readiness:", serverData.readiness);
 
@@ -6996,6 +7422,10 @@ async function pollServerForState() {
         }
     } catch (error) {
         console.error("Error polling server:", error);
+        consecutivePollFailures++;
+        if (consecutivePollFailures >= 20) {
+            handleMultiplayerError("Lost contact with the game server (it may have restarted). Your match cannot continue.");
+        }
     }
 }
 
@@ -7046,6 +7476,7 @@ async function syncMultiplayerState(lastAction = null, force = false, sendingRea
 }
 
 function handleMultiplayerError(message) {
+    consecutivePollFailures = 0;
     setStatus(message);
     if (multiplayer.pollingIntervalId) clearInterval(multiplayer.pollingIntervalId);
     multiplayer.enabled = false;
