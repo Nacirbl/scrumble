@@ -493,3 +493,171 @@ button.small-btn {
     .theme-toggle { top: 10px; right: 15px; width: 30px; height: 30px; font-size: 1em;}
     .modal-content { margin: 20% auto; width: 90%; }
 }
+/* =========================
+   NEW: TOASTS, SCORE SUB, RESULTS, TUTORIAL
+   ========================= */
+
+/* Word toasts ("+7 HEART"), stacked at the top center */
+#toastHost {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    pointer-events: none;
+}
+.toast {
+    background-color: var(--primary-color);
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 1.15em;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    animation: toastIn 0.25s ease-out;
+    opacity: 1;
+    transition: opacity 0.4s, transform 0.4s;
+}
+.toast-builder { background-color: var(--builder-color); }
+.toast.toast-out { opacity: 0; transform: translateY(-12px); }
+@keyframes toastIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.9); }
+    to { opacity: 1; }
+}
+
+/* Score value pulse when a word scores for this player */
+.score-value.score-pulse { animation: scorePulse 0.5s ease; }
+@keyframes scorePulse {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.45); color: var(--builder-color); }
+    100% { transform: scale(1); }
+}
+
+/* Sub-line under each scoreboard number (block points) */
+.score-sub {
+    font-size: 0.8em;
+    opacity: 0.85;
+    margin-top: 2px;
+}
+
+/* Results card modal */
+.results-card { max-width: 560px; }
+.results-winner {
+    font-size: 1.4em;
+    font-weight: bold;
+    color: var(--builder-color);
+    margin: 10px 0 15px;
+}
+.results-table {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 15px;
+    text-align: left;
+}
+.results-player {
+    flex: 1;
+    background-color: var(--background-color);
+    border-radius: var(--border-radius);
+    padding: 10px 12px;
+}
+.results-player h4 { margin: 0 0 6px; color: var(--primary-color); }
+.results-words {
+    text-align: left;
+    max-height: 150px;
+    overflow-y: auto;
+    font-size: 0.9em;
+    margin-bottom: 15px;
+    border-top: 1px solid var(--cell-border);
+    padding-top: 8px;
+}
+.results-words div { padding: 2px 0; }
+.results-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+/* First-run tutorial */
+.tutorial-steps {
+    text-align: left;
+    line-height: 1.7;
+    padding-left: 22px;
+}
+
+/* Collapsible instructions */
+.instructions summary {
+    font-weight: bold;
+    color: var(--primary-color);
+    cursor: pointer;
+    list-style: none;
+}
+.instructions summary::-webkit-details-marker { display: none; }
+.instructions summary h3 { display: inline; margin: 0; font-size: 1.1em; }
+.instructions summary::after {
+    content: " (show/hide)";
+    font-weight: normal;
+    opacity: 0.6;
+    font-size: 0.85em;
+}
+
+/* =========================
+   LETTER MARKET (take-then-place turns)
+   ========================= */
+.market-section {
+    margin: 12px 0;
+    padding: 12px 15px;
+    background-color: var(--background-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+.market-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+#marketTiles { flex-wrap: nowrap; }
+.market-tile {
+    min-width: 42px;
+    border-width: 2px;
+}
+.market-tile.selectable {
+    border-style: solid;
+    border-color: var(--primary-color);
+}
+.market-empty {
+    color: var(--secondary-color);
+    border-style: dashed;
+    background: transparent;
+}
+#blindDrawBtn { white-space: nowrap; }
+
+/* A square where one specific letter completes a word. */
+.cell.one-away {
+    outline: 3px dashed #d97706;
+    outline-offset: -3px;
+    animation: oneAwayPulse 1.6s ease-in-out infinite;
+}
+@keyframes oneAwayPulse {
+    0%, 100% { outline-color: rgba(217, 119, 6, 0.45); }
+    50% { outline-color: rgba(217, 119, 6, 0.95); }
+}
+
+/* Results modal: win streak line and emoji board grids */
+.results-record { margin: 0 0 10px 0; }
+.results-grid-block { margin-top: 12px; }
+.results-grid-block > div { font-weight: bold; color: var(--primary-color); }
+.results-grid {
+    margin: 4px 0 0 0;
+    font-size: 1.3em;
+    line-height: 1.05;
+    letter-spacing: 2px;
+    white-space: pre;
+    text-align: center;
+}
