@@ -5767,7 +5767,10 @@ const CONFIG = {
     letterDistribution: [
         ...'AAAAAAAAABBCDEEEEEEEEEEEEFGGGHHIIIIIIIIIJKLLLLMMNNNNNNOOOOOOOOPPQRRRRRRSSSSTTTTTTUUUUVVWWXYYZ'
     ],
-    tilesPerPlayer: 10,
+    tilesPerPlayer: 10, // (kept for older snapshots; placements per phase now total 25)
+    marketSize: 5, // open letters everyone can see and pick from
+    rackSize: 4, // hidden letters held between turns
+    totalPhasePlacements: 25, // every cell is filled each phase: the Builder places 13, the Saboteur 12
 };
 
 // =========================
@@ -5806,6 +5809,11 @@ let state = {
     statusText: "Initializing...",
     endOfPhase1Board: null,
     lastResults: null,
+    // Letter market: shared open letters + draw pile. The current player first
+    // takes one letter (open market tile or blind draw), then places one letter.
+    market: [],
+    bag: [],
+    awaitingTake: true,
 };
 
 // =========================
@@ -5946,13 +5954,15 @@ function showResumeOffer(snap) {
     const phase = snap.currentPhase || 1;
     const placed = snap.placedTilesThisPhase || 0;
     domElements.resumeDetails.textContent =
-        `A game against the AI is in progress (phase ${phase}, ${placed} of 20 tiles placed). Resume it or start fresh?`;
+        `A game against the AI is in progress (phase ${phase}, ${placed} of ${CONFIG.totalPhasePlacements} tiles placed). Resume it or start fresh?`;
     domElements.resumeModal.style.display = 'block';
 }
 
 function setupEventListeners() {
     domElements.newGameBtn.addEventListener('click', () => initializeGame('ai'));
     domElements.undoBtn.addEventListener('click', undoMove);
+    const blindDrawBtn = document.getElementById('blindDrawBtn');
+    if (blindDrawBtn) blindDrawBtn.addEventListener('click', pickBlindTile);
     domElements.difficultyBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             if (state.gameMode === 'ai' && !state.gameOver && state.currentPhase === 1 && state.placedTilesThisPhase === 0) {
@@ -6028,10 +6038,8 @@ function initializeGame(mode = 'ai') {
     state.lastResults = null;
     state.board = Array(CONFIG.boardSize).fill(null).map(() => Array(CONFIG.boardSize).fill(null));
 
-    generateInitialTilesForAllPlayers();
-
-    resetPlayerForPhase(state.player1, state.player1.originalTiles);
-    resetPlayerForPhase(state.player2, state.player2.originalTiles);
+    dealTiles();
+    state.awaitingTake = true;
 
     state.player1.isBuilder = true;
     state.player2.isBuilder = false;
@@ -6046,6 +6054,7 @@ function initializeGame(mode = 'ai') {
     state.moveHistory = [];
     state.statusText = "";
     state.endOfPhase1Board = null;
+    state.endOfPhase1Words = null;
 
     if (multiplayer.pollingIntervalId) {
         clearInterval(multiplayer.pollingIntervalId);
@@ -6070,38 +6079,27 @@ function initializeGame(mode = 'ai') {
     saveStateToHistory();
 }
 
-function resetPlayerForPhase(playerState, originalTiles) {
-    playerState.tiles = deepClone(originalTiles);
-    if (playerState.tiles) { // Ensure tiles is not null after deepClone
-        playerState.tiles.forEach(tile => {
-            tile.used = false;
-            tile.selected = false;
-        });
-    } else {
-        playerState.tiles = []; // Fallback
-        console.error("Player original tiles were null/undefined after clone for:", playerState.name);
-    }
-    playerState.firstWordTilesLeft = null;
-}
-
-function generateInitialTilesForAllPlayers() {
-    const allTilesPool = shuffleArray([...CONFIG.letterDistribution]);
+// Deal a fresh set of letters: 4 to each player's rack, 5 open market tiles,
+// the rest as the blind-draw bag. Called at game start and again at every
+// phase switch, so each phase is an independent draw. originalTiles is kept
+// only for the server model's compatibility.
+function dealTiles() {
+    const pool = shuffleArray([...CONFIG.letterDistribution]);
     let tileIdCounter = 0;
+    const drawTile = () => ({
+        letter: pool.pop(),
+        id: `tile-${tileIdCounter++}`,
+        used: false,
+        selected: false
+    });
+    const drawN = n => Array.from({ length: n }, drawTile);
 
-    function createTileSet(startIndex) {
-        let tiles = [];
-        for (let i = 0; i < CONFIG.tilesPerPlayer; i++) {
-            tiles.push({
-                letter: allTilesPool[startIndex + i] || '?',
-                id: `tile-${tileIdCounter++}`,
-                used: false,
-                selected: false
-            });
-        }
-        return tiles;
-    }
-    state.player1.originalTiles = createTileSet(0);
-    state.player2.originalTiles = createTileSet(CONFIG.tilesPerPlayer);
+    state.player1.tiles = drawN(CONFIG.rackSize);
+    state.player2.tiles = drawN(CONFIG.rackSize);
+    state.player1.originalTiles = deepClone(state.player1.tiles);
+    state.player2.originalTiles = deepClone(state.player2.tiles);
+    state.market = drawN(CONFIG.marketSize);
+    state.bag = Array.from({ length: pool.length }, drawTile);
 }
 
 function switchPhase() {
@@ -6124,18 +6122,19 @@ function switchPhase() {
 
     if (state.currentPhase === 1) {
         state.endOfPhase1Board = deepClone(state.board);
+        state.endOfPhase1Words = deepClone(state.foundWords); // for the phase-1 share grid
         state.currentPhase = 2;
 
         state.player1.isBuilder = !state.player1.isBuilder;
         state.player2.isBuilder = !state.player2.isBuilder;
 
-        resetPlayerForPhase(state.player1, state.player1.originalTiles);
-        resetPlayerForPhase(state.player2, state.player2.originalTiles);
+        dealTiles();
 
         // Instead of copying the previous board, empty the board for phase 2
         state.board = Array(CONFIG.boardSize).fill(null).map(() => Array(CONFIG.boardSize).fill(null));
 
         state.currentPlayerId = state.player1.isBuilder ? 'player1' : 'player2';
+        state.awaitingTake = true;
 
         state.placedTilesThisPhase = 0;
         state.selectedTile = null;
@@ -6171,36 +6170,89 @@ function calculateAndDisplayFinalResults() {
     domElements.phaseControls.innerHTML = '';
 }
 
+// 'player1', 'player2', or 'draw', using the score and the first-word tie-break.
+function determineWinner() {
+    const p1 = state.player1, p2 = state.player2;
+    if (p1.score > p2.score) return 'player1';
+    if (p2.score > p1.score) return 'player2';
+    const p1FWTL = p1.firstWordTilesLeft ?? Infinity;
+    const p2FWTL = p2.firstWordTilesLeft ?? Infinity;
+    if (p1FWTL < p2FWTL) return 'player1';
+    if (p2FWTL < p1FWTL) return 'player2';
+    return 'draw';
+}
+
+// Win streak and running record against the AI, kept in localStorage. The
+// streak is the hook that pulls the next game: one more duel keeps it alive.
+const AI_RECORD_KEY = 'saboteurAiRecord';
+function loadAiRecord() {
+    const raw = lsGet(AI_RECORD_KEY);
+    try {
+        const r = raw ? JSON.parse(raw) : null;
+        return (r && typeof r.w === 'number') ? r : { w: 0, l: 0, d: 0, streak: 0 };
+    } catch (e) {
+        return { w: 0, l: 0, d: 0, streak: 0 };
+    }
+}
+function recordAiOutcome(winner) {
+    const r = loadAiRecord();
+    if (winner === 'player1') { r.w++; r.streak++; }
+    else if (winner === 'player2') { r.l++; r.streak = 0; }
+    else r.d++;
+    lsSet(AI_RECORD_KEY, JSON.stringify(r));
+    return r;
+}
+
+// Wordle-style spoiler-free artifact: one emoji per board square. Green =
+// square inside a completed word, blue = Builder's letter, red = Saboteur's,
+// black = empty. Both phase boards are encoded with their own found words.
+function boardToEmojiGrid(board, foundWords, builderIsPlayer1) {
+    if (!board) return '';
+    const builderId = builderIsPlayer1 ? 'player1' : 'player2';
+    const wordCells = new Set();
+    (foundWords || []).forEach(fw => (fw.path || []).forEach(([r, c]) => wordCells.add(`${r},${c}`)));
+    const lines = [];
+    for (let r = 0; r < CONFIG.boardSize; r++) {
+        let line = '';
+        for (let c = 0; c < CONFIG.boardSize; c++) {
+            const t = board[r][c];
+            if (!t) line += '⬛';
+            else if (wordCells.has(`${r},${c}`)) line += '🟩';
+            else line += (t.owner === builderId) ? '🟦' : '🟥';
+        }
+        lines.push(line);
+    }
+    return lines.join('\n');
+}
+
 function buildResultsSummary() {
     const p1 = state.player1, p2 = state.player2;
+    const winner = determineWinner();
     let winnerText = "";
-    if (p1.score > p2.score) {
-        winnerText = `${p1.name} wins!`;
-    } else if (p2.score > p1.score) {
-        winnerText = `${p2.name} wins!`;
+    if (winner === 'player1') {
+        winnerText = (p1.score === p2.score)
+            ? `${p1.name} wins on tie-breaker (first word built with fewer own tiles)!`
+            : `${p1.name} wins!`;
+    } else if (winner === 'player2') {
+        winnerText = (p1.score === p2.score)
+            ? `${p2.name} wins on tie-breaker (first word built with fewer own tiles)!`
+            : `${p2.name} wins!`;
     } else {
-        const p1FWTL = p1.firstWordTilesLeft ?? Infinity;
-        const p2FWTL = p2.firstWordTilesLeft ?? Infinity;
-        if (p1FWTL < p2FWTL) {
-            winnerText = `${p1.name} wins on tie-breaker (first word built with fewer own tiles)!`;
-        } else if (p2FWTL < p1FWTL) {
-            winnerText = `${p2.name} wins on tie-breaker (first word built with fewer own tiles)!`;
-        } else {
-            winnerText = "It's a perfect draw!";
-        }
+        winnerText = "It's a perfect draw!";
     }
 
-    const allWords = (state.gameWords || []).map(gw => `${gw.word} (+${gw.points} for ${gw.builderName})`);
-    const shownWords = allWords.slice(0, 12);
-    if (allWords.length > shownWords.length) {
-        shownWords.push(`+${allWords.length - shownWords.length} more`);
-    }
-    const shareText =
-        `Saboteur: ${p1.name} ${p1.score} - ${p2.score} ${p2.name}. ` +
-        (shownWords.length ? `Words: ${shownWords.join(', ')}. ` : '') +
-        `Play at ${window.location.origin}/`;
+    let record = null;
+    if (state.gameMode === 'ai') record = recordAiOutcome(winner);
 
-    return { winnerText, shareText };
+    // Phase 1 always has Player 1 as Builder (roles are fixed at game start);
+    // phase 2 uses the swapped roles still present in state.
+    const gridP1 = boardToEmojiGrid(state.endOfPhase1Board, state.endOfPhase1Words, true);
+    const gridP2 = boardToEmojiGrid(state.board, state.foundWords, state.player1.isBuilder);
+    let shareText = `Saboteur duel: ${p1.name} ${p1.score} – ${p2.score} ${p2.name}`;
+    if (record && record.streak >= 2) shareText += ` (AI win streak: ${record.streak})`;
+    shareText += `.\n${gridP1}\n${gridP2}\nPlay: ${window.location.origin}/`;
+
+    return { winnerText, shareText, winner, record, gridP1, gridP2 };
 }
 
 function showResultsModal(results) {
@@ -6210,8 +6262,12 @@ function showResultsModal(results) {
     const wordRows = (state.gameWords || [])
         .map(gw => `<div><strong>${esc(gw.word)}</strong> +${gw.points} for ${esc(gw.builderName)} (phase ${gw.phase})</div>`)
         .join('');
+    const gridSection = (title, grid) => grid
+        ? `<div class="results-grid-block"><div>${esc(title)}</div><pre class="results-grid">${grid}</pre></div>`
+        : '';
     domElements.resultsBody.innerHTML =
-        `<div class="results-table">
+        `${results.record ? `<p class="results-record">Record vs AI: <strong>${results.record.w}W – ${results.record.l}L – ${results.record.d}D</strong>${results.record.streak > 0 ? ` · current streak: <strong>${results.record.streak}</strong>` : ''}</p>` : ''}
+        <div class="results-table">
             <div class="results-player">
                 <h4>${esc(p1.name)}</h4>
                 <div>Builder score: <strong>${p1.score}</strong></div>
@@ -6225,7 +6281,9 @@ function showResultsModal(results) {
                 <div>First word own tiles: <strong>${p2.firstWordTilesLeft ?? 'none'}</strong></div>
             </div>
         </div>
-        ${wordRows ? `<div class="results-words">${wordRows}</div>` : '<p>No words were completed this game.</p>'}`;
+        ${wordRows ? `<div class="results-words">${wordRows}</div>` : '<p>No words were completed this game.</p>'}
+        ${gridSection('Phase 1 board', results.gridP1)}
+        ${gridSection('Phase 2 board', results.gridP2)}`;
     domElements.resultsModal.style.display = 'block';
 }
 
@@ -6248,6 +6306,10 @@ function selectTile(tileId, ownerPlayerId) {
     }
     if (state.gameOver || state.currentPlayerId !== ownerPlayerId) return;
     if (state.gameMode === 'multiplayer' && multiplayer.localPlayerId !== state.currentPlayerId) return;
+    if (state.awaitingTake) {
+        setStatus('Pick a letter from the market (or draw blind) first.');
+        return;
+    }
 
     const playerState = ownerPlayerId === 'player1' ? state.player1 : state.player2;
     let previouslySelected = false;
@@ -6273,12 +6335,57 @@ function selectTile(tileId, ownerPlayerId) {
 
 let multiplayerInputBlocked = false;
 
+// =========================
+// LETTER MARKET: THE TAKE STEP OF A TURN
+// =========================
+// Every turn has two steps: take one letter (an open market tile or a blind
+// draw from the bag), then place one letter from the rack. This is what gives
+// the player agency over the letters; before this change every tile was a
+// random deal and the outcome was luck.
+function marketPickAllowed() {
+    if (state.gameOver || multiplayerInputBlocked || !state.awaitingTake) return false;
+    if (state.gameMode === 'multiplayer') return multiplayer.localPlayerId === state.currentPlayerId;
+    // In the AI duel the human is player1; the AI takes with its own logic.
+    return state.currentPlayerId === 'player1';
+}
+
+function pickMarketTile(index) {
+    if (!marketPickAllowed()) return;
+    const tile = state.market[index];
+    if (!tile) return;
+    state.market[index] = state.bag.length ? state.bag.shift() : null;
+    applyTakeToCurrentPlayer(tile);
+}
+
+function pickBlindTile() {
+    if (!marketPickAllowed() || state.bag.length === 0) return;
+    applyTakeToCurrentPlayer(state.bag.shift());
+}
+
+function applyTakeToCurrentPlayer(tile) {
+    const playerState = getCurrentPlayerState();
+    saveStateToHistory(); // undo can revert the take itself, not only the follow-up placement
+    playerState.tiles.push(tile);
+    state.awaitingTake = false;
+    state.selectedTile = null;
+    // Sync so the other side sees the new market and racks mid-turn.
+    if (state.gameMode === 'multiplayer' && multiplayer.localPlayerId === state.currentPlayerId) {
+        syncMultiplayerState({ action: 'takeTile', letter: tile.letter });
+    }
+    renderAll();
+    updateStatus();
+}
+
 function placeTile(row, col) {
     if (multiplayerInputBlocked) {
         setStatus('Please wait for the server to confirm your turn...');
         return;
     }
     if (state.gameOver || state.board[row][col] || !state.selectedTile) return;
+    if (state.awaitingTake) {
+        setStatus('Pick a letter from the market (or draw blind) first.');
+        return;
+    }
     if (state.gameMode === 'multiplayer' && multiplayer.localPlayerId !== state.currentPlayerId) {
         console.warn("Not your turn or not local player trying to place tile.");
         return;
@@ -6299,6 +6406,7 @@ function placeTile(row, col) {
 
     state.placedTilesThisPhase++;
     state.selectedTile = null;
+    state.awaitingTake = true;
 
     registerFoundWords(findWordsThroughTile(row, col));
 
@@ -6324,7 +6432,7 @@ function placeTile(row, col) {
     updateScoresAndWordList();
     updateStatus();
 
-    if (state.placedTilesThisPhase >= CONFIG.tilesPerPlayer * 2) {
+    if (state.placedTilesThisPhase >= CONFIG.totalPhasePlacements) {
         if (state.gameMode === 'multiplayer' && !multiplayer.isHost) {
             console.log("Non-host: Phase ended, waiting for host to confirm phase switch.");
         } else {
@@ -6338,10 +6446,15 @@ function placeTile(row, col) {
 }
 
 // Word scan (straight lines): on a 5x5 board a five-letter word occupies a
-// whole row, column, or one of the two main diagonals. A line scores as soon
-// as its fifth tile lands, read in either direction. This is the rule the
-// instructions state; free Boggle paths made a near-full board erupt into
-// dozens of words, which reads as noise rather than skill.
+// whole row, column, or one of the two main diagonals. A line scores when its
+// five letters can be rearranged into a dictionary word (anagram rule), as
+// soon as its fifth tile lands. Two properties of the exact-spelling rule made
+// the core loop unreachable: the defender could always refuse to complete a
+// line, and with only 20 of 25 cells filled the phase ended with the dangerous
+// lines one tile short, so Hard-vs-Hard trials produced about one word per
+// game. Anagram scoring plus a full board gives denial a hard budget instead:
+// the last placements are always forced completions, and the contest becomes
+// which lines get completed and with whose letters, a decision on every turn.
 const LINES_5 = (() => {
     const size = CONFIG.boardSize;
     const lines = [];
@@ -6354,17 +6467,33 @@ const LINES_5 = (() => {
     return lines;
 })();
 
+// sorted-letters key -> dictionary word, built once from the word list so an
+// anagram check is a single map lookup. Lines through MULTISESET_INDEX words
+// score the dictionary spelling regardless of the order the letters sit in.
+const MULTISESET_INDEX = (() => {
+    const index = new Map();
+    CONFIG.dictionary.forEach(w => {
+        if (w.length !== CONFIG.boardSize) return;
+        const key = w.toUpperCase().split('').sort().join('');
+        if (!index.has(key)) index.set(key, w.toUpperCase());
+    });
+    return index;
+})();
+
+// True when `letters` (array of single chars) can be rearranged into a
+// dictionary word.
+function anagramWord(letters) {
+    return MULTISESET_INDEX.get([...letters].sort().join('')) || null;
+}
+
 function findWordsThroughTile(row, col) {
     const wordsFound = [];
     for (const line of LINES_5) {
         if (!line.some(([r, c]) => r === row && c === col)) continue;
         if (line.some(([r, c]) => !state.board[r][c])) continue; // line not complete yet
 
-        const letters = line.map(([r, c]) => state.board[r][c].letter).join('');
-        const reversed = letters.split('').reverse().join('');
-        let word = null;
-        if (CONFIG.dictionary.has(letters.toLowerCase())) word = letters;
-        else if (CONFIG.dictionary.has(reversed.toLowerCase())) word = reversed;
+        const letters = line.map(([r, c]) => state.board[r][c].letter);
+        const word = anagramWord(letters);
         if (!word) continue;
 
         let p1Tiles = 0, p2Tiles = 0;
@@ -6381,6 +6510,61 @@ function findWordsThroughTile(row, col) {
 // WORD SCORING HELPERS
 // =========================
 const WORD_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+
+// Empty cells that sit on a line with exactly one hole, where some single
+// letter would turn the line into a dictionary word (in any order). Pure
+// display aid; the board is never modified.
+function computeOneAwayCells() {
+    const cells = new Set();
+    for (const line of LINES_5) {
+        const empties = line.filter(([r, c]) => !state.board[r][c]);
+        if (empties.length !== 1) continue;
+        const [er, ec] = empties[0];
+        const letters = line.filter(([r, c]) => state.board[r][c])
+            .map(([r, c]) => state.board[r][c].letter);
+        for (let code = 65; code <= 90; code++) {
+            if (anagramWord([...letters, String.fromCharCode(code)])) {
+                cells.add(`${er},${ec}`);
+                break;
+            }
+        }
+    }
+    return cells;
+}
+
+// =========================
+// LETTER MARKET RENDERING
+// =========================
+function renderMarket() {
+    const host = document.getElementById('marketTiles');
+    if (!host) return;
+    host.innerHTML = '';
+    const aiTurn = state.gameMode === 'ai' && getCurrentPlayerState().name === "AI";
+    const myTurn = !state.gameOver && !aiTurn &&
+                   (state.gameMode !== 'multiplayer' || multiplayer.localPlayerId === state.currentPlayerId);
+    const canTake = myTurn && state.awaitingTake && !multiplayerInputBlocked;
+    const market = state.market || [];
+    if (market.length === 0) return;
+    market.forEach((tile, i) => {
+        const tileEl = document.createElement('div');
+        tileEl.className = 'hand-tile market-tile';
+        if (!tile) {
+            tileEl.classList.add('market-empty');
+            tileEl.textContent = '·';
+        } else {
+            tileEl.textContent = tile.letter;
+            if (canTake) {
+                tileEl.classList.add('selectable');
+                tileEl.addEventListener('click', () => pickMarketTile(i));
+            }
+        }
+        host.appendChild(tileEl);
+    });
+    const blindBtn = document.getElementById('blindDrawBtn');
+    const bagCount = document.getElementById('bagCount');
+    if (bagCount) bagCount.textContent = (state.bag || []).length;
+    if (blindBtn) blindBtn.disabled = !(canTake && (state.bag || []).length > 0);
+}
 
 function canonicalPathKey(path) {
     return [...path]
@@ -6399,13 +6583,14 @@ function wordPointsForBuilder(fw, builder) {
     return fw.p2Tiles * 1 + fw.p1Tiles * 2;
 }
 
-// Words not yet scored this phase (each distinct word scores once per phase).
-function isWordScored(word) {
-    return state.foundWords.some(fw => fw.word.toLowerCase() === word.toLowerCase());
-}
-
+// Lines not yet scored this phase. Each of the twelve lines scores at most
+// once, on its own completion. The old rule also blocked a word that had
+// already scored elsewhere; under the full-board anagram rule two lines can
+// legitimately spell the same letters, and both are separate contests over
+// whose tiles sit inside them, so each completed line scores on its own.
 function unscoredWords(words) {
-    return words.filter(w => !isWordScored(w.word));
+    const scoredKeys = new Set(state.foundWords.map(wordFormationKey));
+    return words.filter(w => !scoredKeys.has(w.pathKey || canonicalPathKey(w.path || [])));
 }
 
 // Adds newly found words to the phase list: dedupes against earlier placements,
@@ -6414,18 +6599,16 @@ function unscoredWords(words) {
 // score pulse. Used by both placeTile and makeAIMove so the two paths cannot drift.
 function registerFoundWords(newWords) {
     if (!newWords || newWords.length === 0) return;
-    // A distinct word scores once per phase. On a near-full 5x5 board the same
-    // word can be traced by many different paths; only its first completion
-    // counts, which keeps scores legible and matches standard word-game rules.
-    const scoredWords = new Set(state.foundWords.map(fw => fw.word.toLowerCase()));
+    // Each of the twelve lines scores at most once, on its own completion.
+    // Under the full-board anagram rule a line cannot re-form, so the
+    // formation-key guard only protects against double-registering the same
+    // completion between the take/place paths.
     const existingFormations = new Set(state.foundWords.map(wordFormationKey));
     const builder = state.player1.isBuilder ? state.player1 : state.player2;
     newWords.forEach(w => {
-        if (scoredWords.has(w.word.toLowerCase())) return;
         const key = wordFormationKey(w);
         if (existingFormations.has(key)) return;
         existingFormations.add(key);
-        scoredWords.add(w.word.toLowerCase());
         if (!w.pathKey) w.pathKey = canonicalPathKey(w.path || []);
         state.foundWords.push(w);
         state.visibleWordLineIndices.add(state.foundWords.length - 1);
@@ -6497,7 +6680,10 @@ function saveStateToHistory() {
         statusText: state.statusText,
         gameOver: state.gameOver,
         currentPhase: state.currentPhase,
-        endOfPhase1Board: deepClone(state.endOfPhase1Board)
+        endOfPhase1Board: deepClone(state.endOfPhase1Board),
+        market: deepClone(state.market),
+        bag: deepClone(state.bag),
+        awaitingTake: state.awaitingTake
     };
     state.moveHistory.push(historyEntry);
     if (state.moveHistory.length > 10) {
@@ -6510,7 +6696,7 @@ function saveStateToHistory() {
 // =========================
 // RESUME & KEEP-ALIVE
 // =========================
-const AI_PERSIST_KEY = 'saboteurAiGameV1';
+const AI_PERSIST_KEY = 'saboteurAiGameV2';
 let suppressPersistenceUntilDecision = false;
 
 // Saves the current AI match to localStorage so a closed tab does not cost the
@@ -6530,7 +6716,11 @@ function persistGameState() {
             gameWords: state.gameWords,
             statusText: state.statusText,
             endOfPhase1Board: state.endOfPhase1Board,
-            visibleWordLineIndices: [...state.visibleWordLineIndices]
+            endOfPhase1Words: state.endOfPhase1Words,
+            visibleWordLineIndices: [...state.visibleWordLineIndices],
+            market: state.market,
+            bag: state.bag,
+            awaitingTake: state.awaitingTake
         };
         localStorage.setItem(AI_PERSIST_KEY, JSON.stringify(snapshot));
     } catch (e) {
@@ -6570,7 +6760,13 @@ function resumePersistedGame(snap) {
     state.gameWords = snap.gameWords || [];
     state.statusText = snap.statusText || '';
     state.endOfPhase1Board = snap.endOfPhase1Board || null;
+    state.endOfPhase1Words = snap.endOfPhase1Words || null;
     state.visibleWordLineIndices = new Set(snap.visibleWordLineIndices || []);
+    // Snapshots predate the market model only if the key was changed; the V2
+    // key guarantees market fields exist. Defaults keep a missing field safe.
+    state.market = snap.market || [];
+    state.bag = snap.bag || [];
+    state.awaitingTake = snap.awaitingTake !== false;
     state.moveHistory = [];
     state.selectedTile = null;
     state.gameOver = false;
@@ -6618,6 +6814,9 @@ function undoMove() {
         state.gameOver = prevState.gameOver;
         state.currentPhase = prevState.currentPhase;
         state.endOfPhase1Board = deepClone(prevState.endOfPhase1Board);
+        state.market = deepClone(prevState.market);
+        state.bag = deepClone(prevState.bag);
+        state.awaitingTake = prevState.awaitingTake !== false;
 
         renderAll();
         updateScoresAndWordList();
@@ -6643,7 +6842,7 @@ function makeAIMove() {
 
     if (aiPlayerState.tiles.filter(t => !t.used).length === 0) {
         console.log("AI has no tiles left.");
-        if (state.placedTilesThisPhase >= CONFIG.tilesPerPlayer * 2) {
+        if (state.placedTilesThisPhase >= CONFIG.totalPhasePlacements) {
             switchPhase();
         } else {
             state.currentPlayerId = (state.currentPlayerId === 'player1') ? 'player2' : 'player1';
@@ -6654,11 +6853,26 @@ function makeAIMove() {
 
     saveStateToHistory();
 
+    // Step 1: take a letter. The market is shared, so the take doubles as
+    // denial: a letter the AI grabs is a letter the opponent cannot use.
+    const takeDecision = decideAITake();
+    let takenTile = null;
+    if (takeDecision.kind === 'market') {
+        takenTile = state.market[takeDecision.index] || null;
+        if (takenTile) state.market[takeDecision.index] = state.bag.length ? state.bag.shift() : null;
+    } else if (takeDecision.kind === 'bag') {
+        takenTile = state.bag.shift() || null;
+    }
+    if (takenTile) aiPlayerState.tiles.push(takenTile);
+    state.awaitingTake = false;
+
+    // Step 2: place one letter from the rack (which now includes the taken one).
     const { row, col, tileToPlay } = calculateAIMove();
 
     if (row === undefined || col === undefined || !tileToPlay) {
         console.error("AI move calculation failed or no valid move found.", { row, col, tileToPlay });
         state.currentPlayerId = (state.currentPlayerId === 'player1') ? 'player2' : 'player1';
+        state.awaitingTake = true;
         renderAll();
         updateStatus();
         return;
@@ -6674,14 +6888,120 @@ function makeAIMove() {
     registerFoundWords(findWordsThroughTile(row, col));
 
     state.currentPlayerId = (state.currentPlayerId === 'player1') ? 'player2' : 'player1';
+    state.awaitingTake = true;
 
     renderAll();
     updateScoresAndWordList();
     updateStatus();
 
-    if (state.placedTilesThisPhase >= CONFIG.tilesPerPlayer * 2) {
+    if (state.placedTilesThisPhase >= CONFIG.totalPhasePlacements) {
         switchPhase();
     }
+}
+
+// The AI's take decision. For each letter on offer it computes the best
+// placement value the letter would give it, then adds what the letter is worth
+// beyond this one placement: future usefulness for the Builder, and for the
+// Saboteur a denial bonus for letters the Builder needs to complete a word
+// but does not already hold in their rack (racks are public in this game).
+// The blind draw is scored by the expected value over the remaining bag.
+function decideAITake() {
+    const market = state.market || [];
+    const candidates = [];
+    market.forEach((t, i) => { if (t) candidates.push({ kind: 'market', index: i, letter: t.letter }); });
+
+    if (candidates.length === 0 && (state.bag || []).length === 0) return { kind: 'none' };
+    if (CONFIG.aiDifficulty === 1) {
+        if (candidates.length && Math.random() < 0.5)
+            return candidates[Math.floor(Math.random() * candidates.length)];
+        return (state.bag || []).length ? { kind: 'bag' } : (candidates[0] || { kind: 'none' });
+    }
+
+    const aiState = getCurrentPlayerState();
+    const aiIsSaboteur = !aiState.isBuilder;
+    const builder = state.player1.isBuilder ? state.player1 : state.player2;
+    const builderId = builder === state.player1 ? 'player1' : 'player2';
+    const existingKeys = new Set(state.foundWords.map(wordFormationKey));
+
+    const bestPlacementValueFor = (letter) => {
+        let best = -Infinity;
+        for (let r = 0; r < CONFIG.boardSize; r++) {
+            for (let c = 0; c < CONFIG.boardSize; c++) {
+                if (state.board[r][c]) continue;
+                state.board[r][c] = { letter, owner: state.currentPlayerId };
+                const newWords = unscoredWords(findWordsThroughTile(r, c))
+                    .filter(w => !existingKeys.has(wordFormationKey(w)));
+                let builderGain = 0;
+                newWords.forEach(w => { builderGain += wordPointsForBuilder(w, builder); });
+                let score = 0;
+                if (aiIsSaboteur) {
+                    score -= builderGain * 10; // never hand the Builder a word
+                    const adjBuilderTiles = getNeighbors(r, c).filter(([nr, nc]) => {
+                        const n = state.board[nr][nc];
+                        return n && n.owner !== state.currentPlayerId;
+                    }).length;
+                    score -= adjBuilderTiles * letterUtility(letter) * 1.5; // safe parking
+                } else {
+                    score += builderGain * 10;
+                }
+                state.board[r][c] = null;
+                if (score > best) best = score;
+            }
+        }
+        return best;
+    };
+
+    // Completion cells: lines with exactly one hole where a specific letter
+    // finishes a word. A hole-letter is only worth denying if the Builder
+    // cannot already play it from their rack.
+    const builderRackLetters = new Set(
+        (builder.tiles || []).filter(t => !t.used).map(t => t.letter.toUpperCase()));
+    const completionNeeds = [];
+    for (const line of LINES_5) {
+        const empties = line.filter(([r, c]) => !state.board[r][c]);
+        if (empties.length !== 1) continue;
+        const [er, ec] = empties[0];
+        for (let code = 65; code <= 90; code++) {
+            const L = String.fromCharCode(code);
+            state.board[er][ec] = { letter: L, owner: builderId };
+            let pts = 0;
+            unscoredWords(findWordsThroughTile(er, ec))
+                .filter(w => !existingKeys.has(wordFormationKey(w)))
+                .forEach(w => { pts = Math.max(pts, wordPointsForBuilder(w, builder)); });
+            state.board[er][ec] = null;
+            if (pts > 0) completionNeeds.push({ r: er, c: ec, letter: L, points: pts });
+        }
+    }
+
+    const takeValue = (letter) => {
+        const L = String(letter).toUpperCase();
+        let value = bestPlacementValueFor(L);
+        if (aiIsSaboteur) {
+            completionNeeds.forEach(n => {
+                if (n.letter === L && !builderRackLetters.has(L)) value += n.points * 4;
+            });
+        } else {
+            value += letterUtility(L) * 3; // a common letter keeps options open
+        }
+        return value;
+    };
+
+    const scored = candidates.map(c => ({ ...c, value: takeValue(c.letter) }));
+    let bestMarket = null;
+    scored.forEach(c => { if (!bestMarket || c.value > bestMarket.value + 1e-9) bestMarket = c; });
+
+    let blindValue = -Infinity;
+    if ((state.bag || []).length) {
+        const counts = {};
+        state.bag.forEach(t => { counts[t.letter] = (counts[t.letter] || 0) + 1; });
+        let ev = 0, n = 0;
+        Object.keys(counts).forEach(L => { ev += counts[L] * takeValue(L); n += counts[L]; });
+        blindValue = n ? ev / n : -Infinity;
+    }
+
+    if (bestMarket && blindValue <= bestMarket.value + 1e-9)
+        return { kind: 'market', index: bestMarket.index };
+    return { kind: 'bag' };
 }
 
 function calculateAIMove() {
@@ -6877,6 +7197,7 @@ function getNeighbors(r, c) {
 // =========================
 function renderAll() {
     renderBoard();
+    renderMarket();
     renderPlayerHands();
     updateScoresAndWordList();
     updateGameModeUIDisplay();
@@ -6886,10 +7207,15 @@ function renderAll() {
 
 function renderBoard() {
     domElements.board.innerHTML = '';
-    const canPlaceTile = !multiplayerInputBlocked &&
+    const canPlaceTile = !multiplayerInputBlocked && !state.awaitingTake &&
                          (state.gameMode !== 'multiplayer' ||
                           (state.gameMode === 'multiplayer' && state.currentPlayerId === multiplayer.localPlayerId));
     console.log(`[RENDER BOARD] canPlaceTile: ${canPlaceTile}, multiplayerInputBlocked: ${multiplayerInputBlocked}, gameMode: ${state.gameMode}, currentPlayerId: ${state.currentPlayerId}, localPlayerId: ${multiplayer.localPlayerId}`);
+
+    // Cells where one specific letter would complete a word. The dashed
+    // outline makes the near-miss visible: the Builder sees the chance, the
+    // Saboteur sees the threat to kill.
+    const oneAway = (state.gameOver || state.currentPhase > 2) ? new Set() : computeOneAwayCells();
 
     for (let r = 0; r < CONFIG.boardSize; r++) {
         for (let c = 0; c < CONFIG.boardSize; c++) {
@@ -6910,6 +7236,7 @@ function renderBoard() {
                 cellEl.classList.add(tileData.owner);
 
             } else {
+                if (oneAway.has(`${r},${c}`)) cellEl.classList.add('one-away');
                 if (canPlaceTile) { // Only add listener if placement is allowed
                     cellEl.addEventListener('click', () => placeTile(r, c));
                 } else {
@@ -6937,7 +7264,8 @@ function renderPlayerHands() {
             if (tile.selected) tileEl.classList.add('selected');
 
             const isMyTurn = state.currentPlayerId === localPlayerActualId;
-            const gameAcceptsInput = !state.gameOver && (!multiplayer.enabled || (multiplayer.enabled && isMyTurn));
+            const gameAcceptsInput = !state.gameOver && !state.awaitingTake &&
+                                     (!multiplayer.enabled || (multiplayer.enabled && isMyTurn));
 
             if (gameAcceptsInput) {
                 tileEl.classList.add('selectable');
@@ -6948,13 +7276,10 @@ function renderPlayerHands() {
             }
             domElements.localPlayerHand.appendChild(tileEl);
         });
-        domElements.localPlayerTileCount.textContent = localPlayerState.tiles.filter(t => !t.used).length;
-    } else {
-        domElements.localPlayerTileCount.textContent = "0";
     }
     const localPlayerRoleText = localPlayerState && localPlayerState.isBuilder ? "Builder" : "Saboteur";
-    const tilesLeftCount = (localPlayerState && localPlayerState.tiles) ? localPlayerState.tiles.filter(t => !t.used).length : 0;
-    domElements.localPlayerHandTitle.textContent = `Your Tiles (${localPlayerRoleText}) (${tilesLeftCount} left)`;
+    const inRackCount = (localPlayerState && localPlayerState.tiles) ? localPlayerState.tiles.filter(t => !t.used).length : 0;
+    domElements.localPlayerHandTitle.textContent = `Your Rack (${localPlayerRoleText}) \u2014 ${inRackCount} letters`;
 
     domElements.opponentHand.innerHTML = '';
     if (opponentPlayerState && opponentPlayerState.tiles) { // Check if state and tiles defined
@@ -6965,14 +7290,11 @@ function renderPlayerHands() {
             tileEl.textContent = tile.letter;
             domElements.opponentHand.appendChild(tileEl);
         });
-        domElements.opponentTileCount.textContent = opponentPlayerState.tiles.filter(t => !t.used).length;
-    } else {
-        domElements.opponentTileCount.textContent = "0";
     }
     const opponentRoleText = opponentPlayerState && opponentPlayerState.isBuilder ? "Builder" : "Saboteur";
     const opponentNameForTitle = state.gameMode === 'ai' ? "AI" : "Opponent";
-    const oppTilesLeftCount = (opponentPlayerState && opponentPlayerState.tiles) ? opponentPlayerState.tiles.filter(t => !t.used).length : 0;
-    domElements.opponentHandTitle.textContent = `${opponentNameForTitle}'s Tiles (${opponentRoleText}) (${oppTilesLeftCount} left)`;
+    const oppRackCount = (opponentPlayerState && opponentPlayerState.tiles) ? opponentPlayerState.tiles.filter(t => !t.used).length : 0;
+    domElements.opponentHandTitle.textContent = `${opponentNameForTitle}'s Rack (${opponentRoleText}) \u2014 ${oppRackCount} letters`;
 }
 
 
@@ -7068,10 +7390,12 @@ function updateStatus() {
 
         if (isLocalPlayerTurn) {
             statusMsg = `Your turn (${currentPlayerRole}). `;
-            if (state.selectedTile) {
+            if (state.awaitingTake) {
+                statusMsg += "Take a letter: an open market letter or a blind draw.";
+            } else if (state.selectedTile) {
                 statusMsg += `Place "${state.selectedTile.letter}".`;
             } else {
-                statusMsg += "Select a tile.";
+                statusMsg += "Select a letter from your rack.";
             }
         } else {
             statusMsg = `${turnPlayerName}'s turn (${currentPlayerRole}). Waiting...`;
@@ -7371,6 +7695,10 @@ async function pollServerForState() {
                 state.gameOver = clonedServerState.gameOver;
                 state.statusText = clonedServerState.statusText;
                 state.endOfPhase1Board = clonedServerState.endOfPhase1Board;
+                if (clonedServerState.market) state.market = clonedServerState.market;
+                if (clonedServerState.bag) state.bag = clonedServerState.bag;
+                if (typeof clonedServerState.awaitingTake === 'boolean')
+                    state.awaitingTake = clonedServerState.awaitingTake;
 
                 // Note: Client-specific state like selectedTile, visibleWordLineIndices,
                 // and moveHistory (if used client-side) should NOT be overwritten by server state.

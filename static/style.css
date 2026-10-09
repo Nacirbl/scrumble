@@ -605,3 +605,59 @@ button.small-btn {
     opacity: 0.6;
     font-size: 0.85em;
 }
+
+/* =========================
+   LETTER MARKET (take-then-place turns)
+   ========================= */
+.market-section {
+    margin: 12px 0;
+    padding: 12px 15px;
+    background-color: var(--background-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+.market-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+#marketTiles { flex-wrap: nowrap; }
+.market-tile {
+    min-width: 42px;
+    border-width: 2px;
+}
+.market-tile.selectable {
+    border-style: solid;
+    border-color: var(--primary-color);
+}
+.market-empty {
+    color: var(--secondary-color);
+    border-style: dashed;
+    background: transparent;
+}
+#blindDrawBtn { white-space: nowrap; }
+
+/* A square where one specific letter completes a word. */
+.cell.one-away {
+    outline: 3px dashed #d97706;
+    outline-offset: -3px;
+    animation: oneAwayPulse 1.6s ease-in-out infinite;
+}
+@keyframes oneAwayPulse {
+    0%, 100% { outline-color: rgba(217, 119, 6, 0.45); }
+    50% { outline-color: rgba(217, 119, 6, 0.95); }
+}
+
+/* Results modal: win streak line and emoji board grids */
+.results-record { margin: 0 0 10px 0; }
+.results-grid-block { margin-top: 12px; }
+.results-grid-block > div { font-weight: bold; color: var(--primary-color); }
+.results-grid {
+    margin: 4px 0 0 0;
+    font-size: 1.3em;
+    line-height: 1.05;
+    letter-spacing: 2px;
+    white-space: pre;
+    text-align: center;
+}

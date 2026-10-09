@@ -77,6 +77,11 @@ class GameStateModel(BaseModel):
     gameOver: bool
     statusText: Optional[str] = ""
     endOfPhase1Board: Optional[List[List[Optional[Dict[str, Any]]]]] = None
+    # Letter market (take-then-place turns). The client runs the draw logic
+    # and mirrors these on every update, same as foundWords.
+    market: Optional[List[Optional[Dict[str, Any]]]] = None
+    bag: Optional[List[Dict[str, Any]]] = None
+    awaitingTake: Optional[bool] = True
 
 
 # In-memory game storage
@@ -201,6 +206,10 @@ def update_state_endpoint(payload: UpdateStatePayload):
          current_server_state.foundWords = payload.game_state.foundWords
          # print(f"Server: Updated foundWords from client for game {game_id}. Count: {len(current_server_state.foundWords)}")
 
+    # NOTE: market/bag/rack mirroring happens AFTER action processing below
+    # (see the mirror block near the end of this endpoint). Mirroring earlier
+    # would mark tiles used before the placeTile handler validates them.
+
 
     # Update readiness if provided.
     if ready_flag is not None:
@@ -253,11 +262,12 @@ def update_state_endpoint(payload: UpdateStatePayload):
 
                          # --- Server-Side Phase Transition Check and Logic ---
                          # Check if all tiles for the phase have been placed
-                         # Need access to CONFIG.tilesPerPlayer, which is client-side.
-                         # For now, hardcode 10, but ideally this should be synced or defined server-side.
-                         TILES_PER_PLAYER = 10 # Assuming 10 tiles per player per phase
+                         # Need access to CONFIG.totalPhasePlacements, which is client-side.
+                         # Each phase fills the whole 5x5 board: 25 placements
+                         # (the Builder places 13, the Saboteur 12).
+                         TOTAL_PHASE_PLACEMENTS = 25
 
-                         if current_server_state.placedTilesThisPhase >= TILES_PER_PLAYER * 2:
+                         if current_server_state.placedTilesThisPhase >= TOTAL_PHASE_PLACEMENTS:
                              print(f"Server: Phase {current_server_state.currentPhase} finished. Initiating phase transition.")
 
                              just_finished_builder = current_server_state.player1 if current_server_state.player1.isBuilder else current_server_state.player2
@@ -309,16 +319,12 @@ def update_state_endpoint(payload: UpdateStatePayload):
                                  # Reset board for Phase 2 (empty board)
                                  current_server_state.board = [[None for _ in range(len(current_server_state.board[0]))] for _ in range(len(current_server_state.board))]
 
-                                 # Reset players' tiles (set used to False, keep originalTiles)
-                                 for player_state_obj in [current_server_state.player1, current_server_state.player2]:
-                                     # Assuming originalTiles are preserved and contain the full set for the phase
-                                     if player_state_obj.originalTiles:
-                                         player_state_obj.tiles = [tile.model_copy(update={'used': False, 'selected': False}) for tile in player_state_obj.originalTiles]
-                                         print(f"Server: Resetting tiles for player {player_state_obj.name} for Phase 2. Tiles count: {len(player_state_obj.tiles)}")
-                                     else:
-                                         # This case should ideally not happen if initial sync worked
-                                         player_state_obj.tiles = []
-                                         print(f"Server: Warning - originalTiles not found for player {player_state_obj.name} during phase 2 reset.")
+                                 # The client has already dealt the phase 2 letters (racks,
+                                 # market and bag) before sending this update, and the mirror
+                                 # block above copied them. The old reset from originalTiles
+                                 # would clobber that fresh deal, so it is removed.
+                                 current_server_state.awaitingTake = True
+                                 print("Server: Phase 2 letters mirrored from client deal.")
 
 
                                  # Set current player to the new builder for Phase 2 start
@@ -365,6 +371,21 @@ def update_state_endpoint(payload: UpdateStatePayload):
              # and sync the reverted state, but server needs to validate this isn't abused.
              # For now, we'll just log that it's not supported server-side.
              pass
+
+    # --- Mirror the letter market and racks from the acting client ---
+    # Takes are client-driven (draw randomness lives client-side), so the
+    # market, bag and racks come from the payload on every update. This runs
+    # AFTER the placeTile handler above, which still validates against the
+    # server-side copy of the hand.
+    if payload.game_state:
+         if payload.game_state.market is not None:
+              current_server_state.market = payload.game_state.market
+         if payload.game_state.bag is not None:
+              current_server_state.bag = payload.game_state.bag
+         if payload.game_state.awaitingTake is not None:
+              current_server_state.awaitingTake = payload.game_state.awaitingTake
+         current_server_state.player1.tiles = payload.game_state.player1.tiles
+         current_server_state.player2.tiles = payload.game_state.player2.tiles
 
     # Update last seen time and last action regardless of action type
     game["last_action"] = payload.last_action

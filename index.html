@@ -34,8 +34,16 @@
                 </div>
 
                 <div class="player-hand-section current-player-hand-section">
-                    <div class="player-hand-title" id="localPlayerHandTitle">Your Tiles (<span id="localPlayerTileCount">0</span> remaining)</div>
+                    <div class="player-hand-title" id="localPlayerHandTitle">Your Rack</div>
                     <div class="player-hand" id="localPlayerHand"></div>
+                </div>
+
+                <div class="market-section">
+                    <div class="player-hand-title">The Market — take one letter per turn</div>
+                    <div class="market-row">
+                        <div class="player-hand" id="marketTiles"></div>
+                        <button id="blindDrawBtn" class="secondary">Draw blind (<span id="bagCount">0</span>)</button>
+                    </div>
                 </div>
 
                 <div class="controls">
@@ -93,15 +101,16 @@
             <summary><h3 style="display:inline">How to Play</h3></summary>
             <p><strong>Objective:</strong> Have the higher Builder score after two phases. Each player builds once and sabotages once.</p>
             <p><strong>Phases:</strong> In phase 1 you are the <strong class="builder-text">Builder</strong> and your opponent is the <strong class="saboteur-text">Saboteur</strong>. In phase 2 the roles swap.</p>
-            <p><strong>Gameplay:</strong> On your turn you place one of your 10 letter tiles on an empty square of the 5x5 board. Each phase ends when all 20 tiles are placed.</p>
-            <p><strong>Words:</strong> A word forms when a full row, column, or main diagonal spells a dictionary word, read in either direction. The word scores as soon as its fifth tile lands, no matter which letter of it you placed last.</p>
+            <p><strong>Your turn has two steps:</strong> First you <em>take</em> one letter: either an open letter from the shared <strong>Market</strong> (five letters everyone can see) or a <em>blind draw</em> from the bag. Then you <strong>place</strong> one letter from your rack onto an empty square of the 5x5 board. Each phase ends when the board is full: 25 placements, the Builder placing 13 and the Saboteur 12. Because the market is shared, taking a letter also denies it to your opponent, and because the board must be filled, the last placements always complete lines. Those two pressures are the heart of the game.</p>
+            <p><strong>Words:</strong> A full row, column, or main diagonal scores when its five letters can be rearranged into a dictionary word. The word scores as soon as its fifth tile lands, whichever letter that was.</p>
             <p><strong>Scoring (for the current Builder):</strong></p>
             <ul>
                 <li>+1 point for each of the Builder's own tiles in a valid word.</li>
                 <li>+2 points for each of the Saboteur's tiles used in that Builder's word.</li>
-                <li>Each distinct word scores once per phase, but one placement can complete several different words at once and they all count. The Found Words panel lists each word and its points; the checkbox shows the path on the board.</li>
+                <li>Each line scores once, as its fifth letter lands, but one placement can complete a row and a column at once and both count. The Found Words panel lists each word and its points; the checkbox shows the path on the board.</li>
             </ul>
             <p><strong>The Saboteur:</strong> earns +1 "Blocked" point for each of their placed tiles that ends the phase inside no word. Their best moves jam the board without handing the Builder a completion.</p>
+            <p><strong>Near-miss cells</strong> are outlined with a dashed amber border: an empty square where some single letter would complete a word. A Builder races to reach them; a Saboteur races to take the needed letter off the market before the Builder can.</p>
             <p><strong>Game end & winning:</strong> The player with the higher Builder score across their two phases wins. If the scores are tied, the player whose first word contained fewer of their own tiles wins.</p>
         </details>
     </div>
@@ -147,10 +156,11 @@
       <div class="modal-content">
         <h2>How to play Saboteur</h2>
         <ol class="tutorial-steps">
-            <li>Pick a tile from your rack, then click an empty square. You have 10 tiles per phase, and there are two phases.</li>
-            <li>A full row, column, or main diagonal that spells a dictionary word scores for the Builder: +1 per own tile, +2 per opponent tile. Words count read from either end.</li>
-            <li>You build in phase 1 and sabotage in phase 2, so a tile that helps you now can hurt you later.</li>
-            <li>The Saboteur earns +1 for every placed tile that stays out of all words. The Found Words panel lists each word; its checkbox draws the path on the board.</li>
+            <li>Each turn has two steps. First <strong>take</strong> a letter from the shared Market, or draw one blind. Then <strong>place</strong> one of your letters on the board.</li>
+            <li>The Market is shared: a letter you take is a letter your opponent can never use. Grab what you need, and grab what they need.</li>
+            <li>A full row, column, or main diagonal scores when its five letters can be <strong>rearranged</strong> into a dictionary word: +1 per own tile, +2 per opponent tile. Order on the board does not matter.</li>
+            <li>A square outlined in dashed amber is a <em>near miss</em>: some letter would complete a word there. Dashes are worth racing to, and the last few squares of every phase are always forced completions.</li>
+            <li>You build in phase 1 and sabotage in phase 2, then your scores are compared. Beat the AI twice in a row to start a win streak.</li>
         </ol>
         <button id="tutorialDoneBtn">Start playing</button>
       </div>
